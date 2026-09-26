@@ -380,7 +380,7 @@ def _make_tree(
 
     figure.update_layout(
         **_layout(
-            "Customer choice tree · shared buyers, not proven substitution",
+            "Customer Choice Tree",
             max(630, min(2400, 145 + 22 * n)),
         ),
         margin={"l": 280, "r": 35, "t": 100, "b": 80},
@@ -1578,7 +1578,7 @@ def write_dashboard(
 
     # Convert all figures to HTML
     figures = [
-        ("Customer choice tree", tree, True),
+        ("Customer Choice Tree", tree, True),
         ("Customer repertoire similarity", heatmap, False),
         ("Branch stability", branch_stability, False),
         ("Repertoire vs basket affinity", rep_basket_scatter, False),
