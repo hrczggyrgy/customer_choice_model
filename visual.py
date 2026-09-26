@@ -132,62 +132,39 @@ def load_run(directory: str | Path) -> dict:
     expansion_rate_a_to_b = np.full((n, n), np.nan, dtype=float)
     expansion_rate_b_to_a = np.full((n, n), np.nan, dtype=float)
 
-    fields = [
-        "product_id_a",
-        "product_id_b",
-        "customer_jaccard",
-        "order_jaccard",
-        "shared_customers",
-        "basket_lift",
-        "bootstrap_pair_cocluster",
-        "customer_overlap_lift",
-        "expected_shared_customers",
-        "excess_shared_customers",
-        "migration_a_to_b",
-        "migration_b_to_a",
-        "migration_rate_a_to_b",
-        "migration_rate_b_to_a",
-        "migration_ci_lower_a_to_b",
-        "migration_ci_upper_a_to_b",
-        "migration_ci_lower_b_to_a",
-        "migration_ci_upper_b_to_a",
-        "migration_reliable_a",
-        "migration_reliable_b",
-        "expansion_a_to_b",
-        "expansion_b_to_a",
-        "expansion_rate_a_to_b",
-        "expansion_rate_b_to_a",
+    # Batch-fill matrices using vectorized operations
+    a_idx = np.array([positions[pid] for pid in pairs["product_id_a"].to_list()])
+    b_idx = np.array([positions[pid] for pid in pairs["product_id_b"].to_list()])
+
+    matrix_field_pairs = [
+        (similarity, "customer_jaccard"),
+        (order_similarity, "order_jaccard"),
+        (shared_buyers, "shared_customers"),
+        (basket_lift, "basket_lift"),
+        (bootstrap_cocluster, "bootstrap_pair_cocluster"),
+        (customer_overlap_lift, "customer_overlap_lift"),
+        (expected_shared, "expected_shared_customers"),
+        (excess_shared, "excess_shared_customers"),
+        (migration_a_to_b, "migration_a_to_b"),
+        (migration_b_to_a, "migration_b_to_a"),
+        (migration_rate_a_to_b, "migration_rate_a_to_b"),
+        (migration_rate_b_to_a, "migration_rate_b_to_a"),
+        (migration_ci_lower_a_to_b, "migration_ci_lower_a_to_b"),
+        (migration_ci_upper_a_to_b, "migration_ci_upper_a_to_b"),
+        (migration_ci_lower_b_to_a, "migration_ci_lower_b_to_a"),
+        (migration_ci_upper_b_to_a, "migration_ci_upper_b_to_a"),
+        (migration_reliable_a, "migration_reliable_a"),
+        (migration_reliable_b, "migration_reliable_b"),
+        (expansion_a_to_b, "expansion_a_to_b"),
+        (expansion_b_to_a, "expansion_b_to_a"),
+        (expansion_rate_a_to_b, "expansion_rate_a_to_b"),
+        (expansion_rate_b_to_a, "expansion_rate_b_to_a"),
     ]
 
-    for row in pairs.select(fields).iter_rows(named=True):
-        a = positions[row["product_id_a"]]
-        b = positions[row["product_id_b"]]
-
-        for matrix, field in (
-            (similarity, "customer_jaccard"),
-            (order_similarity, "order_jaccard"),
-            (shared_buyers, "shared_customers"),
-            (basket_lift, "basket_lift"),
-            (bootstrap_cocluster, "bootstrap_pair_cocluster"),
-            (customer_overlap_lift, "customer_overlap_lift"),
-            (expected_shared, "expected_shared_customers"),
-            (excess_shared, "excess_shared_customers"),
-            (migration_a_to_b, "migration_a_to_b"),
-            (migration_b_to_a, "migration_b_to_a"),
-            (migration_rate_a_to_b, "migration_rate_a_to_b"),
-            (migration_rate_b_to_a, "migration_rate_b_to_a"),
-            (migration_ci_lower_a_to_b, "migration_ci_lower_a_to_b"),
-            (migration_ci_upper_a_to_b, "migration_ci_upper_a_to_b"),
-            (migration_ci_lower_b_to_a, "migration_ci_lower_b_to_a"),
-            (migration_ci_upper_b_to_a, "migration_ci_upper_b_to_a"),
-            (migration_reliable_a, "migration_reliable_a"),
-            (migration_reliable_b, "migration_reliable_b"),
-            (expansion_a_to_b, "expansion_a_to_b"),
-            (expansion_b_to_a, "expansion_b_to_a"),
-            (expansion_rate_a_to_b, "expansion_rate_a_to_b"),
-            (expansion_rate_b_to_a, "expansion_rate_b_to_a"),
-        ):
-            matrix[a, b] = matrix[b, a] = row[field]
+    for matrix, col in matrix_field_pairs:
+        vals = pairs[col].to_numpy()
+        matrix[a_idx, b_idx] = vals
+        matrix[b_idx, a_idx] = vals
 
     if not np.isfinite(similarity).all():
         raise ValueError("Customer similarity contains non-finite values.")
@@ -930,6 +907,9 @@ def _make_migration_matrix(
 
     labels = [f"{names[i]} ({ids[i]})" for i in range(len(names))]
 
+    finite_vals = matrix[np.isfinite(matrix)]
+    zmax = float(finite_vals.max()) if len(finite_vals) > 0 else 1.0
+
     figure = go.Figure(
         go.Heatmap(
             z=matrix,
@@ -937,7 +917,7 @@ def _make_migration_matrix(
             y=labels,
             colorscale="RdYlBu_r",
             zmin=0,
-            zmax=np.nanmax(matrix) if np.any(np.isfinite(matrix)) else 1,
+            zmax=zmax,
             colorbar={"title": "Migration<br>rate"},
             hovertemplate=(
                 "Source: %{y}<br>Destination: %{x}<br>Migration rate: %{z:.2%}<extra></extra>"
@@ -1392,14 +1372,14 @@ def _make_sku_relationship_rankings(data: dict, sku_index: int, top_n: int = 10)
     ids = data["ids"]
 
     # Repertoire (customer Jaccard)
-    repertoire_scores = data["similarity"][sku_index, :]
+    repertoire_scores = data["similarity"][sku_index, :].copy()
     repertoire_scores[sku_index] = -1  # exclude self
     rep_order = np.argsort(repertoire_scores)[::-1][:top_n]
     rep_names = [f"{names[i]} ({ids[i]})" for i in rep_order]
     rep_values = repertoire_scores[rep_order]
 
     # Basket (basket lift)
-    basket_scores = data["basket_lift"][sku_index, :]
+    basket_scores = data["basket_lift"][sku_index, :].copy()
     basket_scores[sku_index] = -1
     basket_order = np.argsort(basket_scores)[::-1][:top_n]
     basket_names = [f"{names[i]} ({ids[i]})" for i in basket_order]

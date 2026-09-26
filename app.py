@@ -17,7 +17,21 @@ import polars as pl
 import streamlit as st
 
 from engine import Config, run
-from visual import build_figures, load_run
+from visual import (
+    _make_branch_stability,
+    _make_cluster_evolution,
+    _make_migration_ci,
+    _make_migration_matrix,
+    _make_migration_rank,
+    _make_repertoire_basket_scatter,
+    _make_retention_exit_decomposition,
+    _make_sku_behavior_map,
+    _make_sku_profile,
+    _make_sku_relationship_rankings,
+    _make_transition_funnel,
+    build_figures,
+    load_run,
+)
 
 BASE = Path(__file__).resolve().parent
 SAMPLE = BASE / "sample_data" / "instacart_yogurt.parquet"
@@ -277,8 +291,8 @@ def label(index: int) -> str:
     return f"{text[:72]}{'…' if len(text) > 72 else ''} · {ids[index]}"
 
 
-summary, tree_tab, pairs_tab, exports = st.tabs(
-    ["Overview", "Choice tree", "Pair explorer", "Downloads"]
+summary, tree_tab, pairs_tab, migration_tab, sku_tab, exports = st.tabs(
+    ["Overview", "Choice tree", "Pair explorer", "Migration", "SKU profiles", "Downloads"]
 )
 
 with summary:
@@ -312,12 +326,19 @@ with tree_tab:
             max_labels=max_labels,
             optimal_order=optimal_order,
         )
+        st.session_state["tree_fig"] = tree
+        st.session_state["heatmap_fig"] = heatmap
         st.plotly_chart(tree, use_container_width=True, config={"displaylogo": False})
         st.caption(
             "Branch opacity and dotted lines indicate whole-customer bootstrap support. "
             "When bootstrap is zero, stability has not been estimated."
         )
         st.plotly_chart(heatmap, use_container_width=True, config={"displaylogo": False})
+        st.plotly_chart(_make_branch_stability(data), use_container_width=True)
+        st.plotly_chart(_make_repertoire_basket_scatter(data), use_container_width=True)
+        evo = _make_cluster_evolution(data)
+        if evo is not None:
+            st.plotly_chart(evo, use_container_width=True)
     except Exception as exc:
         st.error(f"Could not render visuals: {exc}")
 
@@ -337,7 +358,7 @@ with pairs_tab:
     if first == second:
         st.info("Select two different SKUs.")
     else:
-        a_id, b_id = ids[first], ids[second]
+        a_id, b_id = sorted([ids[first], ids[second]])
         pair = (
             pl.scan_parquet(folder / "pair_metrics.parquet")
             .filter((pl.col("product_id_a") == a_id) & (pl.col("product_id_b") == b_id))
@@ -378,6 +399,20 @@ with pairs_tab:
         use_container_width=True,
     )
 
+with migration_tab:
+    st.plotly_chart(_make_migration_matrix(data), use_container_width=True)
+    st.plotly_chart(_make_migration_rank(data), use_container_width=True)
+    st.plotly_chart(_make_migration_ci(data), use_container_width=True)
+    st.plotly_chart(_make_retention_exit_decomposition(data), use_container_width=True)
+
+with sku_tab:
+    st.plotly_chart(_make_sku_behavior_map(data), use_container_width=True)
+    st.markdown("### SKU detail")
+    selected_sku = st.selectbox("Select SKU", options, format_func=label, key="sku_detail")
+    st.plotly_chart(_make_sku_profile(data, selected_sku), use_container_width=True)
+    st.plotly_chart(_make_transition_funnel(data, selected_sku), use_container_width=True)
+    st.plotly_chart(_make_sku_relationship_rankings(data, selected_sku), use_container_width=True)
+
 with exports:
     st.write(
         "Download the current run's model outputs. HTML includes the display settings "
@@ -402,14 +437,16 @@ with exports:
         )
     if st.button("Prepare interactive HTML report"):
         try:
-            if "tree" not in locals() or "heatmap" not in locals():
-                tree, heatmap = build_figures(
+            if "tree_fig" not in st.session_state or "heatmap_fig" not in st.session_state:
+                st.session_state["tree_fig"], st.session_state["heatmap_fig"] = build_figures(
                     folder,
                     cut=cut,
                     search=search or None,
                     max_labels=max_labels,
                     optimal_order=optimal_order,
                 )
+            tree = st.session_state["tree_fig"]
+            heatmap = st.session_state["heatmap_fig"]
             tree_html = pio.to_html(tree, full_html=False, include_plotlyjs=True)
             heatmap_html = pio.to_html(heatmap, full_html=False, include_plotlyjs=False)
             page = (

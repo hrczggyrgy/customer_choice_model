@@ -8,6 +8,7 @@ The previous visual.py/app.py require updating for schema_version 3 before use.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -73,7 +74,6 @@ def prepare_data(c: Config):
     if c.analysis_start or c.analysis_end:
         if c.date_col not in schema:
             raise ValueError("Date window requires date_col")
-        import datetime
 
         dates = [
             datetime.date.fromisoformat(v) if v else None
@@ -187,11 +187,16 @@ def _stability(x, z, c):
     co = np.zeros((p, p), dtype=float)
     root = _clades(z, p)
     rng = np.random.default_rng(c.seed)
+
+    # Pre-allocate Jaccard buffer for bootstrap loop
+    jac_buf = np.empty((p, p), dtype=float)
+
     for _ in range(c.bootstrap):
         w = np.bincount(rng.integers(x.shape[0], size=x.shape[0]), minlength=x.shape[0]).astype(
             np.int64
         )
-        zz = linkage(squareform(1 - _jac(_overlap(x, w)), checks=False), method=c.linkage_method)
+        np.subtract(1.0, _jac(_overlap(x, w)), out=jac_buf)
+        zz = linkage(squareform(jac_buf, checks=False), method=c.linkage_method)
         present = set(_clades(zz, p))
         hits += np.fromiter((v in present for v in root), dtype=np.int32, count=p - 1)
         labels = fcluster(zz, t=c.stability_cut, criterion="distance")
@@ -221,18 +226,49 @@ def build_transitions(full, skus):
     expansion = {}
     exit_events = []
     pair_events = []
-    last = None
-    previous = None
-    occasion_pairs = 0
-    for user, _order, _number, items in basket.iter_rows():
-        current = set(items)
-        if user == last and previous is not None:
-            occasion_pairs += 1
-            added = current - previous
+
+    # Vectorized consecutive-order self-join
+    basket_lf = basket.lazy()
+    prev = basket_lf.rename(
+        {
+            "order_number": "prev_number",
+            "items": "prev_items",
+            "order_id": "prev_order_id",
+        }
+    ).select(["user_id", "prev_number", "prev_items"])
+
+    pairs_lf = basket_lf.join(
+        prev,
+        left_on=["user_id", pl.col("order_number") - 1],
+        right_on=["user_id", "prev_number"],
+        how="inner",
+    )
+
+    # Collect the joined pairs
+    pairs_df = pairs_lf.collect()
+
+    occasion_pairs = pairs_df.height
+
+    if occasion_pairs > 0:
+        # Convert to numpy for fast set operations
+        prev_items_list = pairs_df["prev_items"].to_list()
+        curr_items_list = pairs_df["items"].to_list()
+        users = pairs_df["user_id"].to_numpy()
+
+        # Process each pair using vectorized operations where possible
+        for prev_items, curr_items, user in zip(
+            prev_items_list, curr_items_list, users, strict=True
+        ):
+            prev_set = set(prev_items)
+            curr_set = set(curr_items)
+
+            added = curr_set - prev_set
             new_selected = added & selected
-            for a in previous & selected:
+            prev_selected = prev_set & selected
+
+            for a in prev_selected:
                 state["opportunities"][a] += 1
-                if a in current:
+                if a in curr_set:
                     state["retained"][a] += 1
                     for b in new_selected:
                         expansion[a, b] = expansion.get((a, b), 0) + 1
@@ -248,7 +284,7 @@ def build_transitions(full, skus):
                     for b in new_selected:
                         migration[a, b] = migration.get((a, b), 0) + 1
                         pair_events.append((user, a, b))
-        last, previous = user, current
+
     return dict(
         state,
         migration=migration,
