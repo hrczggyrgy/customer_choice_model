@@ -26,7 +26,6 @@ build/
 
 # Outputs and data
 output/
-sample_data/
 
 # IDE
 .idea/
