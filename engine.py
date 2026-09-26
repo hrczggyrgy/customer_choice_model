@@ -398,6 +398,24 @@ def run(c: Config):
     def _st(field: str, s: str) -> int:
         return trans[field][s] if trans else 0
 
+    # SKU-level counts
+    trans_opps = np.array([_st("opportunities", s) for s in skus])
+    exit_opps = np.array([_st("exits", s) for s in skus])
+    retained = np.array([_st("retained", s) for s in skus])
+    exit_new_sel = np.array([_st("exit_new_selected", s) for s in skus])
+    exit_new_unsel = np.array([_st("exit_new_unselected_only", s) for s in skus])
+    exit_no_new = np.array([_st("exit_no_new", s) for s in skus])
+
+    # SKU-level rates (safe division)
+    def _safe_rate(num: np.ndarray, den: np.ndarray) -> np.ndarray:
+        return np.divide(num, den, out=np.full_like(num, np.nan, dtype=float), where=den > 0)
+
+    retention_rate = _safe_rate(retained, trans_opps)
+    exit_rate = _safe_rate(exit_opps, trans_opps)
+    exit_new_selected_rate = _safe_rate(exit_new_sel, exit_opps)
+    exit_new_unselected_only_rate = _safe_rate(exit_new_unsel, exit_opps)
+    exit_no_new_rate = _safe_rate(exit_no_new, exit_opps)
+
     sku = pl.DataFrame(
         {
             "product_id": skus,
@@ -406,12 +424,17 @@ def run(c: Config):
             "category_orders": orders,
             "buyer_penetration": buyers / category_users,
             "order_support": orders / category_orders,
-            "transition_opportunities": [_st("opportunities", s) for s in skus],
-            "exit_opportunities": [_st("exits", s) for s in skus],
-            "retention_occasions": [_st("retained", s) for s in skus],
-            "exit_new_selected": [_st("exit_new_selected", s) for s in skus],
-            "exit_new_unselected_only": [_st("exit_new_unselected_only", s) for s in skus],
-            "exit_no_new_sku": [_st("exit_no_new", s) for s in skus],
+            "transition_opportunities": trans_opps,
+            "exit_opportunities": exit_opps,
+            "retention_occasions": retained,
+            "exit_new_selected": exit_new_sel,
+            "exit_new_unselected_only": exit_new_unsel,
+            "exit_no_new_sku": exit_no_new,
+            "retention_rate": retention_rate,
+            "exit_rate": exit_rate,
+            "exit_new_selected_rate": exit_new_selected_rate,
+            "exit_new_unselected_only_rate": exit_new_unselected_only_rate,
+            "exit_no_new_rate": exit_no_new_rate,
         }
     )
     a, b = np.triu_indices(p, 1)
@@ -475,6 +498,14 @@ def run(c: Config):
             "migration_reliable_b": eb >= c.min_exit_opportunities,
             "expansion_a_to_b": directed(expand, a, b),
             "expansion_b_to_a": directed(expand, b, a),
+            "expansion_rate_a_to_b": _safe_rate(
+                np.array([expand.get((skus[i], skus[k]), 0) for i, k in zip(a, b, strict=True)]),
+                retained[a],
+            ),
+            "expansion_rate_b_to_a": _safe_rate(
+                np.array([expand.get((skus[k], skus[i]), 0) for i, k in zip(a, b, strict=True)]),
+                retained[b],
+            ),
         }
     )
     nodes = pl.DataFrame(

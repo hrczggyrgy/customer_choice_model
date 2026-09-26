@@ -6,9 +6,9 @@ ChoiceMap builds an exploratory **behavioral SKU hierarchy** from customer-linke
 
 ## Current status
 
-- `engine.py`: runnable scientific pipeline and command-line interface.
-- `visual.py`: interactive visual report and reusable `build_figures` function; save the previously supplied Python code as `visual.py` beside `engine.py`.
-- Streamlit uploader and app: **planned, not implemented**.
+- `engine.py`: runnable scientific pipeline and command-line interface (schema v3).
+- `visual.py`: interactive visual report with 10+ figure factories; reusable `build_figures`, `build_all_figures`, and `write_dashboard` functions.
+- `app.py`: Streamlit application with upload, configuration, multi-tab exploration, and cross-filtering.
 - Validation and benchmarks on the full yogurt data: **not yet reported**. A small smoke test is not a full-data benchmark.
 
 ## Quick start
@@ -25,23 +25,12 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-Create `requirements.txt` with:
-
-```txt
-polars[rtcompat]==2.0.0rc1
-numpy>=1.26,<3
-scipy>=1.13,<2
-pyarrow>=16,<24
-plotly>=5.24,<7
-```
-
-This is a development requirement set rather than a platform-tested lockfile. If pip cannot find a compatible 2.0 RC wheel for your Python/platform, check the available Polars release and runtime wheels rather than silently downgrading the project. Record resolved versions when publishing benchmarks.
-
 Run the supplied yogurt example (after placing the file at `sample_data/instacart_yogurt.parquet`):
 
 ```bash
 python engine.py --input sample_data/instacart_yogurt.parquet --out output/yogurt
 python visual.py --run output/yogurt --out output/yogurt/choice_map.html
+streamlit run app.py
 ```
 
 Open `output/yogurt/choice_map.html` in a browser. The Plotly report is interactive and is saved as standalone HTML; it can be large because it includes Plotly.js ([Plotly HTML export](https://plotly.com/python/interactive-html-export/)).
@@ -61,12 +50,12 @@ Each row represents a product appearing in an order. The default schema correspo
 | --- | --- | --- |
 | `user_id` | Yes | Customer identifier; needed for repertoire overlap and bootstrap |
 | `order_id` | Yes | Globally unique basket/order identifier, belonging to exactly one customer |
-| `product_id` | Yes | Stable SKU identifier |
+| `product_id` | Yes | Stable SKU identifier (int or string) |
 | `order_number` | Yes by default | Ordering of a customer's orders, used for adjacent category purchase occasions |
 | `product_name` | No | Human-readable label; product ID is used when absent |
 | `aisle` | Yes under defaults | Category filter; default is `aisle == "yogurt"` |
 
-`user_id`, `order_id`, `product_id`, and—when switching is enabled—`order_number` must be losslessly castable to signed 64-bit integers. Null required fields and orders assigned to multiple customers are rejected. Repeated `order_id`–`product_id` rows are deduplicated before modeling. Products with fewer than the selected number of distinct buyers are excluded; the top eligible SKUs are selected by buyer count. The report includes customer and order coverage, not just retained SKU count.
+`user_id`, `order_id`, `product_id`, and—when switching is enabled—`order_number` must be losslessly castable to signed 64-bit integers (or kept as strings). Null required fields and orders assigned to multiple customers are rejected. Repeated `order_id`–`product_id` rows are deduplicated before modeling. Products with fewer than the selected number of distinct buyers are excluded; the top eligible SKUs are selected by buyer count. The report includes customer and order coverage, not just retained SKU count.
 
 `order_dow`, `order_hour_of_day`, `department`, and other source fields are **not used** by the current engine. The sample's `order_hour_of_day` is a string; no conversion is needed because it is not read.
 
@@ -125,35 +114,61 @@ A successful engine run writes files in the `--out` directory:
 
 | File | Contents |
 | --- | --- |
-| `sku_metrics.parquet` | Retained SKUs, labels, buyer counts, order counts, and penetration |
-| `pair_metrics.parquet` | One row per unordered SKU pair with basket, customer, and switching metrics |
+| `sku_metrics.parquet` | Retained SKUs, labels, buyer counts, order counts, penetration, **retention/exit rates** |
+| `pair_metrics.parquet` | One row per unordered SKU pair with basket, customer, switching, and **expansion rates** |
 | `tree_nodes.parquet` | SciPy linkage children, merge height, size, and bootstrap support |
+| `cluster_assignments.parquet` | Cluster membership for each SKU at multiple K |
+| `cluster_profiles.parquet` | Cluster-level summary statistics |
 | `run.json` | Configuration, counts, coverage, leaf order, runtime, and tree-fit diagnostic |
 
-The visual command adds an interactive HTML report at the path given by `--out`. The HTML report includes a color-coded dendrogram and tree-ordered similarity heatmap. Faded/dotted branches flag lower bootstrap support, and leaf-marker area helps identify higher-penetration SKUs. Changing the visual cut changes display group colors; it **does not rebuild** the hierarchy. Optional `--optimal-order` rotates equivalent branches for display but may take substantially longer ([SciPy optimal leaf ordering](https://docs.scipy.org/doc/scipy/reference/generated/scipy.cluster.hierarchy.optimal_leaf_ordering.html)).
+The visual command adds an interactive HTML report at the path given by `--out`. The HTML report includes a color-coded dendrogram, tree-ordered similarity heatmap, branch stability chart, repertoire-basket scatter, SKU behavior map, migration matrix, top migration flows, migration confidence intervals, retention/exit decomposition, and cluster evolution. Faded/dotted branches flag lower bootstrap support, and leaf-marker area helps identify higher-penetration SKUs. Changing the visual cut changes display group colors; it **does not rebuild** the hierarchy. Optional `--optimal-order` rotates equivalent branches for display but may take substantially longer ([SciPy optimal leaf ordering](https://docs.scipy.org/doc/scipy/reference/generated/scipy.cluster.hierarchy.optimal_leaf_ordering.html)).
 
-For use inside a future Streamlit app:
+For use inside the Streamlit app or custom code:
 
 ```python
-from visual import build_figures
+from visual import build_figures, load_run
 
+data = load_run("output/yogurt")
 tree, heatmap = build_figures("output/yogurt", cut=0.7)
-st.plotly_chart(tree, use_container_width=True)
-st.plotly_chart(heatmap, use_container_width=True)
+# Also available: _make_branch_stability, _make_repertoire_basket_scatter,
+# _make_sku_behavior_map, _make_migration_matrix, _make_migration_rank,
+# _make_migration_ci, _make_retention_exit_decomposition, _make_cluster_evolution,
+# _make_sku_profile, _make_sku_relationship_rankings
 ```
-
-The example assumes `st` is an existing Streamlit instance/import. Streamlit is **not** required to run the current command-line pipeline.
 
 ## CLI options
 
 ```bash
 python engine.py --help
 python visual.py --help
+streamlit run app.py
 ```
 
 Useful engine flags: `--input`, `--out`, `--category-col`, `--category`, `--min-buyers`, `--max-skus`, `--bootstrap`, `--seed`, `--linkage`, `--no-switching`. Useful visual flags: `--run`, `--out`, `--cut`, `--search`, `--max-labels`, `--optimal-order`.
 
 The engine defaults to `min_buyers=30`, `max_skus=120`, `bootstrap=30`, `seed=42`, `linkage=average`, and a maximum of **5,000,000 category-filtered input rows**. The last limit is configured in Python through `Config(max_input_rows=...)` rather than a current CLI flag. Higher SKU caps increase full pair-table, bootstrap, and HTML rendering costs; start small and benchmark on your machine.
+
+## Visualizations overview
+
+### Structure
+- **Customer choice tree** — dendrogram with bootstrap support (opacity/dash encoding)
+- **Customer repertoire similarity** — tree-ordered heatmap of customer Jaccard
+- **Branch stability** — horizontal bar chart of bootstrap support per merge
+- **Cluster evolution** — Sankey diagram showing how clusters split across K=4,6,8
+
+### Relationships
+- **Repertoire vs basket affinity** — scatter of customer Jaccard vs basket lift (bubble size = shared buyers, color = co-cluster support)
+- **SKU behavior map** — penetration vs retention rate (bubble size = exit opportunities)
+
+### Sequential
+- **Migration matrix** — heatmap of exit→new-selection rates (rows=source, cols=destination)
+- **Top migration flows** — ranked horizontal bars with event counts and rates
+- **Migration confidence intervals** — error-bar chart for top flows
+- **Retention / exit decomposition** — stacked bars per SKU (retained, exit→new selected, exit→new unselected, exit→no new)
+
+### SKU Explorer (Streamlit)
+- **SKU profile** — KPI cards, exit decomposition pie, transition funnel
+- **SKU relationship rankings** — top repertoire, basket, migration, expansion partners
 
 ## Limitations and next steps
 
@@ -161,7 +176,7 @@ The engine defaults to `min_buyers=30`, `max_skus=120`, `bootstrap=30`, `seed=42
 - Sequential transitions currently iterate grouped baskets in Python, which may be the first bottleneck on the full yogurt sample; profile this stage before claiming the pipeline is fast.
 - A shared customer repertoire can reflect popularity, variety seeking, or exposure. The input contains no price, promotions, availability, or stockout evidence, so assortment removal effects cannot be estimated.
 - The visual layer reads the entire pair table; very large SKU universes require a bounded display or alternative rendering strategy.
-- Planned: property tests for sparse counts, repeatable full-sample benchmarks, temporal splits, consensus clustering, a safer column-mapping upload flow, and a Streamlit application.
+- Planned: property tests for sparse counts, repeatable full-sample benchmarks, temporal splits, consensus clustering.
 
 ## Reproducibility
 

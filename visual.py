@@ -67,6 +67,14 @@ def load_run(directory: str | Path) -> dict:
     pairs = pl.read_parquet(directory / "pair_metrics.parquet")
     nodes = pl.read_parquet(directory / "tree_nodes.parquet").sort("node_id")
 
+    # Optional cluster files
+    cluster_assignments = None
+    cluster_profiles = None
+    if (directory / "cluster_assignments.parquet").exists():
+        cluster_assignments = pl.read_parquet(directory / "cluster_assignments.parquet")
+    if (directory / "cluster_profiles.parquet").exists():
+        cluster_profiles = pl.read_parquet(directory / "cluster_profiles.parquet")
+
     ids = sku["product_id"].to_numpy()
     n = len(ids)
 
@@ -99,12 +107,30 @@ def load_run(directory: str | Path) -> dict:
         for name, product_id in zip(sku["product_name"].to_list(), ids, strict=True)
     ]
 
-    positions = {int(product_id): i for i, product_id in enumerate(ids)}
+    positions = {product_id: i for i, product_id in enumerate(ids)}
 
     similarity = np.eye(n, dtype=float)
     order_similarity = np.eye(n, dtype=float)
     shared_buyers = np.zeros((n, n), dtype=float)
     basket_lift = np.ones((n, n), dtype=float)
+    bootstrap_cocluster = np.zeros((n, n), dtype=float)
+    customer_overlap_lift = np.ones((n, n), dtype=float)
+    expected_shared = np.zeros((n, n), dtype=float)
+    excess_shared = np.zeros((n, n), dtype=float)
+    migration_a_to_b = np.zeros((n, n), dtype=float)
+    migration_b_to_a = np.zeros((n, n), dtype=float)
+    migration_rate_a_to_b = np.full((n, n), np.nan, dtype=float)
+    migration_rate_b_to_a = np.full((n, n), np.nan, dtype=float)
+    migration_ci_lower_a_to_b = np.full((n, n), np.nan, dtype=float)
+    migration_ci_upper_a_to_b = np.full((n, n), np.nan, dtype=float)
+    migration_ci_lower_b_to_a = np.full((n, n), np.nan, dtype=float)
+    migration_ci_upper_b_to_a = np.full((n, n), np.nan, dtype=float)
+    migration_reliable_a = np.zeros((n, n), dtype=bool)
+    migration_reliable_b = np.zeros((n, n), dtype=bool)
+    expansion_a_to_b = np.zeros((n, n), dtype=float)
+    expansion_b_to_a = np.zeros((n, n), dtype=float)
+    expansion_rate_a_to_b = np.full((n, n), np.nan, dtype=float)
+    expansion_rate_b_to_a = np.full((n, n), np.nan, dtype=float)
 
     fields = [
         "product_id_a",
@@ -113,19 +139,55 @@ def load_run(directory: str | Path) -> dict:
         "order_jaccard",
         "shared_customers",
         "basket_lift",
+        "bootstrap_pair_cocluster",
+        "customer_overlap_lift",
+        "expected_shared_customers",
+        "excess_shared_customers",
+        "migration_a_to_b",
+        "migration_b_to_a",
+        "migration_rate_a_to_b",
+        "migration_rate_b_to_a",
+        "migration_ci_lower_a_to_b",
+        "migration_ci_upper_a_to_b",
+        "migration_ci_lower_b_to_a",
+        "migration_ci_upper_b_to_a",
+        "migration_reliable_a",
+        "migration_reliable_b",
+        "expansion_a_to_b",
+        "expansion_b_to_a",
+        "expansion_rate_a_to_b",
+        "expansion_rate_b_to_a",
     ]
 
     for row in pairs.select(fields).iter_rows(named=True):
-        a = positions[int(row["product_id_a"])]
-        b = positions[int(row["product_id_b"])]
+        a = positions[row["product_id_a"]]
+        b = positions[row["product_id_b"]]
 
         for matrix, field in (
             (similarity, "customer_jaccard"),
             (order_similarity, "order_jaccard"),
             (shared_buyers, "shared_customers"),
             (basket_lift, "basket_lift"),
+            (bootstrap_cocluster, "bootstrap_pair_cocluster"),
+            (customer_overlap_lift, "customer_overlap_lift"),
+            (expected_shared, "expected_shared_customers"),
+            (excess_shared, "excess_shared_customers"),
+            (migration_a_to_b, "migration_a_to_b"),
+            (migration_b_to_a, "migration_b_to_a"),
+            (migration_rate_a_to_b, "migration_rate_a_to_b"),
+            (migration_rate_b_to_a, "migration_rate_b_to_a"),
+            (migration_ci_lower_a_to_b, "migration_ci_lower_a_to_b"),
+            (migration_ci_upper_a_to_b, "migration_ci_upper_a_to_b"),
+            (migration_ci_lower_b_to_a, "migration_ci_lower_b_to_a"),
+            (migration_ci_upper_b_to_a, "migration_ci_upper_b_to_a"),
+            (migration_reliable_a, "migration_reliable_a"),
+            (migration_reliable_b, "migration_reliable_b"),
+            (expansion_a_to_b, "expansion_a_to_b"),
+            (expansion_b_to_a, "expansion_b_to_a"),
+            (expansion_rate_a_to_b, "expansion_rate_a_to_b"),
+            (expansion_rate_b_to_a, "expansion_rate_b_to_a"),
         ):
-            matrix[a, b] = matrix[b, a] = float(row[field])
+            matrix[a, b] = matrix[b, a] = row[field]
 
     if not np.isfinite(similarity).all():
         raise ValueError("Customer similarity contains non-finite values.")
@@ -144,6 +206,26 @@ def load_run(directory: str | Path) -> dict:
         "order_similarity": order_similarity,
         "shared_buyers": shared_buyers,
         "basket_lift": basket_lift,
+        "bootstrap_cocluster": bootstrap_cocluster,
+        "customer_overlap_lift": customer_overlap_lift,
+        "expected_shared": expected_shared,
+        "excess_shared": excess_shared,
+        "migration_a_to_b": migration_a_to_b,
+        "migration_b_to_a": migration_b_to_a,
+        "migration_rate_a_to_b": migration_rate_a_to_b,
+        "migration_rate_b_to_a": migration_rate_b_to_a,
+        "migration_ci_lower_a_to_b": migration_ci_lower_a_to_b,
+        "migration_ci_upper_a_to_b": migration_ci_upper_a_to_b,
+        "migration_ci_lower_b_to_a": migration_ci_lower_b_to_a,
+        "migration_ci_upper_b_to_a": migration_ci_upper_b_to_a,
+        "migration_reliable_a": migration_reliable_a,
+        "migration_reliable_b": migration_reliable_b,
+        "expansion_a_to_b": expansion_a_to_b,
+        "expansion_b_to_a": expansion_b_to_a,
+        "expansion_rate_a_to_b": expansion_rate_a_to_b,
+        "expansion_rate_b_to_a": expansion_rate_b_to_a,
+        "cluster_assignments": cluster_assignments,
+        "cluster_profiles": cluster_profiles,
     }
 
 
@@ -287,7 +369,7 @@ def _make_tree(
                 customdata=[
                     [
                         data["names"][leaf],
-                        int(data["ids"][leaf]),
+                        data["ids"][leaf],
                         int(buyers[leaf]),
                         float(data["sku"]["buyer_penetration"][leaf]),
                         int(cluster),
@@ -432,6 +514,981 @@ def _make_heatmap(data: dict, order: list[int]) -> go.Figure:
     return figure
 
 
+def _make_branch_stability(data: dict, min_support: float = 0.0) -> go.Figure:
+    """Horizontal bar chart of branch bootstrap support."""
+    supports = data["nodes"]["bootstrap_support"].to_numpy()
+    n = len(data["ids"])
+    node_ids = np.arange(n, 2 * n - 1)
+
+    # Filter by minimum support
+    mask = np.isfinite(supports) & (supports >= min_support)
+    filtered_supports = supports[mask]
+    filtered_nodes = node_ids[mask]
+
+    # Sort by support descending
+    sort_idx = np.argsort(filtered_supports)[::-1]
+    filtered_supports = filtered_supports[sort_idx]
+    filtered_nodes = filtered_nodes[sort_idx]
+
+    # Create labels
+    labels = [f"Branch {int(node)}" for node in filtered_nodes]
+    percentages = [f"{s:.0%}" for s in filtered_supports]
+
+    figure = go.Figure(
+        go.Bar(
+            x=filtered_supports,
+            y=labels,
+            orientation="h",
+            marker_color="#3273DC",
+            text=percentages,
+            textposition="outside",
+            hovertemplate=("<b>%{y}</b><br>Bootstrap support: %{x:.1%}<extra></extra>"),
+        )
+    )
+
+    figure.update_layout(
+        **_layout(
+            "Branch stability · bootstrap support by merge",
+            max(400, 100 + 25 * len(filtered_supports)),
+        ),
+        margin={"l": 120, "r": 80, "t": 80, "b": 60},
+        xaxis={"title": "Bootstrap support", "range": [0, 1.05], "gridcolor": "#EDF1F6"},
+        yaxis={"autorange": "reversed"},
+    )
+
+    figure.add_vline(x=0.75, line_dash="dash", line_color=MUTED, opacity=0.5)
+    figure.add_annotation(
+        x=0.75,
+        y=1.02,
+        xref="x",
+        yref="paper",
+        text="75% threshold",
+        showarrow=False,
+        font={"size": 10, "color": MUTED},
+        xanchor="left",
+    )
+
+    return figure
+
+
+def _make_repertoire_basket_scatter(
+    data: dict, min_shared: int = 1, min_cocluster: float = 0.0
+) -> go.Figure:
+    """Repertoire vs basket affinity scatter plot."""
+    n = len(data["ids"])
+    a, b = np.triu_indices(n, 1)
+
+    x = data["similarity"][a, b]  # customer_jaccard
+    y = data["basket_lift"][a, b]  # basket_lift
+    sizes = data["shared_buyers"][a, b]
+    cocluster = data["bootstrap_cocluster"][a, b]
+    reliable = data["migration_reliable_a"][a, b] | data["migration_reliable_b"][a, b]
+
+    # Filter
+    mask = (sizes >= min_shared) & (cocluster >= min_cocluster) & np.isfinite(x) & np.isfinite(y)
+    x = x[mask]
+    y = y[mask]
+    sizes = sizes[mask]
+    cocluster = cocluster[mask]
+    reliable = reliable[mask]
+    pair_a = a[mask]
+    pair_b = b[mask]
+
+    # Normalize sizes for marker
+    max_size = max(sizes.max(), 1) if len(sizes) > 0 else 1
+    marker_sizes = 8 + 20 * np.sqrt(sizes / max_size)
+
+    # Color by co-cluster support
+    colors = np.where(
+        np.isfinite(cocluster),
+        np.clip(cocluster * 255, 0, 255).astype(int),
+        128,
+    )
+
+    figure = go.Figure()
+
+    # Add quadrant lines
+    x_median = np.median(x) if len(x) > 0 else 0.5
+    y_median = np.median(y) if len(y) > 0 else 1.0
+
+    figure.add_vline(x=x_median, line_dash="dot", line_color=NEUTRAL, opacity=0.5)
+    figure.add_hline(y=y_median, line_dash="dot", line_color=NEUTRAL, opacity=0.5)
+
+    figure.add_trace(
+        go.Scatter(
+            x=x,
+            y=y,
+            mode="markers",
+            marker={
+                "size": marker_sizes,
+                "color": colors,
+                "colorscale": "Viridis",
+                "showscale": True,
+                "colorbar": {"title": "Bootstrap<br>co-cluster"},
+                "cmin": 0,
+                "cmax": 1,
+                "opacity": 0.7,
+                "line": {"color": "white", "width": 0.5},
+            },
+            customdata=np.column_stack(
+                [
+                    [data["names"][i] for i in pair_a],
+                    [data["names"][i] for i in pair_b],
+                    [data["ids"][i] for i in pair_a],
+                    [data["ids"][i] for i in pair_b],
+                    sizes,
+                    x,
+                    y,
+                    cocluster,
+                ]
+            ),
+            hovertemplate=(
+                "<b>%{customdata[0]}</b> ↔ <b>%{customdata[1]}</b>"
+                "<br>Product IDs: %{customdata[2]} × %{customdata[3]}"
+                "<br>Shared buyers: %{customdata[4]:,.0f}"
+                "<br>Customer Jaccard (repertoire): %{customdata[5]:.3f}"
+                "<br>Basket lift: %{customdata[6]:.2f}x"
+                "<br>Bootstrap co-cluster: %{customdata[7]:.1%}"
+                "<extra></extra>"
+            ),
+            showlegend=False,
+        )
+    )
+
+    figure.update_layout(
+        **_layout("Repertoire vs basket affinity", 700),
+        margin={"l": 80, "r": 80, "t": 80, "b": 80},
+        xaxis={
+            "title": "Customer Jaccard (repertoire overlap)",
+            "range": [-0.02, 1.02],
+            "gridcolor": "#EDF1F6",
+        },
+        yaxis={
+            "title": "Basket lift (same-order association)",
+            "range": [0, max(y.max() * 1.1, 1.1) if len(y) > 0 else 2],
+            "gridcolor": "#EDF1F6",
+        },
+    )
+
+    # Add quadrant annotations
+    if len(x) > 0:
+        figure.add_annotation(
+            x=0.95,
+            y=0.95,
+            xref="paper",
+            yref="paper",
+            text="High repertoire<br>High basket",
+            showarrow=False,
+            font={"size": 10, "color": MUTED},
+            xanchor="right",
+            yanchor="top",
+        )
+        figure.add_annotation(
+            x=0.05,
+            y=0.95,
+            xref="paper",
+            yref="paper",
+            text="Low repertoire<br>High basket",
+            showarrow=False,
+            font={"size": 10, "color": MUTED},
+            xanchor="left",
+            yanchor="top",
+        )
+        figure.add_annotation(
+            x=0.95,
+            y=0.05,
+            xref="paper",
+            yref="paper",
+            text="High repertoire<br>Low basket",
+            showarrow=False,
+            font={"size": 10, "color": MUTED},
+            xanchor="right",
+            yanchor="bottom",
+        )
+        figure.add_annotation(
+            x=0.05,
+            y=0.05,
+            xref="paper",
+            yref="paper",
+            text="Low repertoire<br>Low basket",
+            showarrow=False,
+            font={"size": 10, "color": MUTED},
+            xanchor="left",
+            yanchor="bottom",
+        )
+
+    return figure
+
+
+def _make_sku_behavior_map(data: dict) -> go.Figure:
+    """SKU behavior map: buyer penetration vs retention rate."""
+    sku = data["sku"]
+    penetration = sku["buyer_penetration"].to_numpy()
+    retention_rate = sku["retention_rate"].to_numpy()
+    exit_opps = sku["exit_opportunities"].to_numpy()
+    names = data["names"]
+    ids = data["ids"]
+
+    # Filter valid values
+    mask = np.isfinite(penetration) & np.isfinite(retention_rate) & np.isfinite(exit_opps)
+    penetration = penetration[mask]
+    retention_rate = retention_rate[mask]
+    exit_opps = exit_opps[mask]
+    filtered_names = [names[i] for i in np.where(mask)[0]]
+    filtered_ids = [ids[i] for i in np.where(mask)[0]]
+
+    max_exits = max(exit_opps.max(), 1) if len(exit_opps) > 0 else 1
+    marker_sizes = 8 + 25 * np.sqrt(exit_opps / max_exits)
+
+    figure = go.Figure(
+        go.Scatter(
+            x=penetration,
+            y=retention_rate,
+            mode="markers",
+            marker={
+                "size": marker_sizes,
+                "color": penetration,
+                "colorscale": "Blues",
+                "showscale": True,
+                "colorbar": {"title": "Buyer<br>penetration"},
+                "cmin": 0,
+                "cmax": max(penetration.max(), 0.01),
+                "opacity": 0.8,
+                "line": {"color": "white", "width": 1},
+            },
+            customdata=np.column_stack(
+                [filtered_names, filtered_ids, exit_opps, penetration, retention_rate]
+            ),
+            hovertemplate=(
+                "<b>%{customdata[0]}</b>"
+                "<br>Product ID: %{customdata[1]}"
+                "<br>Exit opportunities: %{customdata[2]:,.0f}"
+                "<br>Buyer penetration: %{customdata[3]:.2%}"
+                "<br>Retention rate: %{customdata[4]:.2%}"
+                "<extra></extra>"
+            ),
+            showlegend=False,
+        )
+    )
+
+    # Add median lines
+    if len(penetration) > 0:
+        x_med = np.median(penetration)
+        y_med = np.median(retention_rate)
+        figure.add_vline(x=x_med, line_dash="dot", line_color=NEUTRAL, opacity=0.5)
+        figure.add_hline(y=y_med, line_dash="dot", line_color=NEUTRAL, opacity=0.5)
+
+    figure.update_layout(
+        **_layout("SKU behavior map · penetration vs retention", 650),
+        margin={"l": 80, "r": 80, "t": 80, "b": 80},
+        xaxis={
+            "title": "Buyer penetration",
+            "range": [-0.02, max(penetration.max() * 1.1, 0.1) if len(penetration) > 0 else 1],
+            "gridcolor": "#EDF1F6",
+            "tickformat": ".0%",
+        },
+        yaxis={
+            "title": "Retention rate",
+            "range": [-0.02, 1.02],
+            "gridcolor": "#EDF1F6",
+            "tickformat": ".0%",
+        },
+    )
+
+    return figure
+
+
+def _make_cluster_evolution(data: dict) -> go.Figure | None:
+    """Cluster evolution Sankey: shows how clusters split from K to K+1."""
+    assignments = data.get("cluster_assignments")
+    if assignments is None:
+        return None
+
+    # Find cluster columns (cluster_k4, cluster_k6, cluster_k8, etc.)
+    cluster_cols = [c for c in assignments.columns if c.startswith("cluster_k")]
+    if len(cluster_cols) < 2:
+        return None
+
+    # Sort by K value
+    cluster_cols.sort(key=lambda x: int(x.replace("cluster_k", "")))
+
+    # Build Sankey data
+    labels = []
+    label_to_idx = {}
+    sources = []
+    targets = []
+    values = []
+
+    # Track cluster sizes at each K
+    cluster_sizes = {}
+
+    for _k_idx, col in enumerate(cluster_cols):
+        k_val = int(col.replace("cluster_k", ""))
+        clusters = assignments[col].to_numpy()
+        unique_clusters = sorted(np.unique(clusters))
+
+        for cl in unique_clusters:
+            label = f"K={k_val}: Cluster {cl}"
+            label_to_idx[label] = len(labels)
+            labels.append(label)
+            mask = clusters == cl
+            cluster_sizes[(k_val, cl)] = int(mask.sum())
+
+    # Build flows between consecutive K levels
+    for i in range(len(cluster_cols) - 1):
+        col_from = cluster_cols[i]
+        col_to = cluster_cols[i + 1]
+        k_from = int(col_from.replace("cluster_k", ""))
+        k_to = int(col_to.replace("cluster_k", ""))
+
+        assignments_from = assignments[col_from].to_numpy()
+        assignments_to = assignments[col_to].to_numpy()
+
+        for cl_from in sorted(np.unique(assignments_from)):
+            mask_from = assignments_from == cl_from
+            downstream = assignments_to[mask_from]
+            for cl_to in sorted(np.unique(downstream)):
+                count = int((downstream == cl_to).sum())
+                if count > 0:
+                    label_from = f"K={k_from}: Cluster {cl_from}"
+                    label_to = f"K={k_to}: Cluster {cl_to}"
+                    sources.append(label_to_idx[label_from])
+                    targets.append(label_to_idx[label_to])
+                    values.append(count)
+
+    if not sources:
+        return None
+
+    # Color by K level
+    node_colors = []
+    for label in labels:
+        k_val = int(label.split(":")[0].replace("K=", ""))
+        color_idx = (k_val - 2) % len(COLORS) if k_val >= 2 else 0
+        node_colors.append(COLORS[color_idx])
+
+    figure = go.Figure(
+        go.Sankey(
+            arrangement="snap",
+            node={
+                "label": labels,
+                "color": node_colors,
+                "pad": 20,
+                "thickness": 20,
+                "line": {"color": "white", "width": 1},
+            },
+            link={
+                "source": sources,
+                "target": targets,
+                "value": values,
+                "color": "rgba(100,100,100,0.3)",
+            },
+        )
+    )
+
+    figure.update_layout(
+        **_layout("Cluster evolution · how groups split across K", 600),
+        margin={"l": 40, "r": 40, "t": 80, "b": 40},
+    )
+
+    return figure
+
+
+def _make_migration_matrix(
+    data: dict,
+    min_reliability: bool = True,
+    top_n: int | None = None,
+) -> go.Figure:
+    """Migration rate matrix: source SKU (rows) → destination SKU (columns)."""
+    n = len(data["ids"])
+    names = data["names"]
+    ids = data["ids"]
+    migration_rate = data["migration_rate_a_to_b"]
+    reliable_a = data["migration_reliable_a"]
+
+    # Create full matrix (migration_rate_a_to_b is upper triangular)
+    matrix = np.full((n, n), np.nan)
+    a, b = np.triu_indices(n, 1)
+    matrix[a, b] = migration_rate[a, b]
+    matrix[b, a] = data["migration_rate_b_to_a"][a, b]
+
+    # Build reliability mask
+    reliable = np.zeros((n, n), dtype=bool)
+    reliable[a, b] = reliable_a[a, b]
+    reliable[b, a] = data["migration_reliable_b"][a, b]
+
+    # Apply reliability filter
+    if min_reliability:
+        matrix = np.where(reliable, matrix, np.nan)
+
+    # Optionally filter to top N SKUs by exit opportunities
+    if top_n is not None:
+        exit_opps = data["sku"]["exit_opportunities"].to_numpy()
+        top_indices = np.argsort(exit_opps)[::-1][:top_n]
+        matrix = matrix[np.ix_(top_indices, top_indices)]
+        names = [names[i] for i in top_indices]
+        ids = [ids[i] for i in top_indices]
+
+    labels = [f"{names[i]} ({ids[i]})" for i in range(len(names))]
+
+    figure = go.Figure(
+        go.Heatmap(
+            z=matrix,
+            x=labels,
+            y=labels,
+            colorscale="RdYlBu_r",
+            zmin=0,
+            zmax=np.nanmax(matrix) if np.any(np.isfinite(matrix)) else 1,
+            colorbar={"title": "Migration<br>rate"},
+            hovertemplate=(
+                "Source: %{y}<br>Destination: %{x}<br>Migration rate: %{z:.2%}<extra></extra>"
+            ),
+        )
+    )
+
+    figure.update_layout(
+        **_layout("Migration matrix · exit → new selection", 700),
+        margin={"l": 200, "r": 50, "t": 100, "b": 200},
+    )
+
+    figure.update_xaxes(tickangle=-55, tickfont={"size": 9})
+    figure.update_yaxes(tickfont={"size": 9})
+
+    return figure
+
+
+def _make_migration_rank(data: dict, top_n: int = 20) -> go.Figure:
+    """Top observed migration flows as horizontal bar chart."""
+    n = len(data["ids"])
+    a, b = np.triu_indices(n, 1)
+
+    # Combine both directions
+    migration_a = data["migration_a_to_b"][a, b]
+    migration_b = data["migration_b_to_a"][a, b]
+    rate_a = data["migration_rate_a_to_b"][a, b]
+    rate_b = data["migration_rate_b_to_a"][a, b]
+    reliable_a = data["migration_reliable_a"][a, b]
+    reliable_b = data["migration_reliable_b"][a, b]
+
+    # Build combined arrays
+    pairs = []
+    for i in range(len(a)):
+        if reliable_a[i] and migration_a[i] > 0:
+            pairs.append(
+                (
+                    data["names"][a[i]],
+                    data["names"][b[i]],
+                    data["ids"][a[i]],
+                    data["ids"][b[i]],
+                    int(migration_a[i]),
+                    float(rate_a[i]),
+                    "a→b",
+                )
+            )
+        if reliable_b[i] and migration_b[i] > 0:
+            pairs.append(
+                (
+                    data["names"][b[i]],
+                    data["names"][a[i]],
+                    data["ids"][b[i]],
+                    data["ids"][a[i]],
+                    int(migration_b[i]),
+                    float(rate_b[i]),
+                    "b→a",
+                )
+            )
+
+    if not pairs:
+        figure = go.Figure()
+        figure.update_layout(**_layout("Top migration flows · none reliable", 400))
+        return figure
+
+    # Sort by count descending
+    pairs.sort(key=lambda x: x[4], reverse=True)
+    pairs = pairs[:top_n]
+
+    sources = [p[0] for p in pairs]
+    dests = [p[1] for p in pairs]
+    counts = [p[4] for p in pairs]
+    rates = [p[5] for p in pairs]
+
+    labels = [f"{s} → {d}" for s, d in zip(sources, dests, strict=True)]
+
+    figure = go.Figure(
+        go.Bar(
+            x=counts,
+            y=labels,
+            orientation="h",
+            marker_color="#E48B36",
+            text=[f"{c:,} events · {r:.1%}" for c, r in zip(counts, rates, strict=True)],
+            textposition="outside",
+            hovertemplate=(
+                "<b>%{y}</b><br>Events: %{x:,}<br>Migration rate: %{customdata:.1%}<extra></extra>"
+            ),
+            customdata=rates,
+        )
+    )
+
+    figure.update_layout(
+        **_layout(f"Top {len(pairs)} observed migration flows", max(400, 100 + 25 * len(pairs))),
+        margin={"l": 280, "r": 80, "t": 80, "b": 60},
+        xaxis={"title": "Migration events", "gridcolor": "#EDF1F6"},
+        yaxis={"autorange": "reversed"},
+    )
+
+    return figure
+
+
+def _make_migration_ci(data: dict, top_n: int = 15) -> go.Figure:
+    """Migration confidence intervals for top flows."""
+    n = len(data["ids"])
+    a, b = np.triu_indices(n, 1)
+
+    migration_a = data["migration_a_to_b"][a, b]
+    migration_b = data["migration_b_to_a"][a, b]
+    rate_a = data["migration_rate_a_to_b"][a, b]
+    rate_b = data["migration_rate_b_to_a"][a, b]
+    ci_lower_a = data["migration_ci_lower_a_to_b"][a, b]
+    ci_upper_a = data["migration_ci_upper_a_to_b"][a, b]
+    ci_lower_b = data["migration_ci_lower_b_to_a"][a, b]
+    ci_upper_b = data["migration_ci_upper_b_to_a"][a, b]
+    reliable_a = data["migration_reliable_a"][a, b]
+    reliable_b = data["migration_reliable_b"][a, b]
+
+    pairs = []
+    for i in range(len(a)):
+        if reliable_a[i] and migration_a[i] > 0 and np.isfinite(rate_a[i]):
+            pairs.append(
+                (
+                    data["names"][a[i]],
+                    data["names"][b[i]],
+                    data["ids"][a[i]],
+                    data["ids"][b[i]],
+                    float(rate_a[i]),
+                    float(ci_lower_a[i]),
+                    float(ci_upper_a[i]),
+                )
+            )
+        if reliable_b[i] and migration_b[i] > 0 and np.isfinite(rate_b[i]):
+            pairs.append(
+                (
+                    data["names"][b[i]],
+                    data["names"][a[i]],
+                    data["ids"][b[i]],
+                    data["ids"][a[i]],
+                    float(rate_b[i]),
+                    float(ci_lower_b[i]),
+                    float(ci_upper_b[i]),
+                )
+            )
+
+    if not pairs:
+        figure = go.Figure()
+        figure.update_layout(**_layout("Migration confidence intervals · none reliable", 400))
+        return figure
+
+    # Sort by rate descending
+    pairs.sort(key=lambda x: x[4], reverse=True)
+    pairs = pairs[:top_n]
+
+    labels = [f"{p[0]} → {p[1]}" for p in pairs]
+    rates = [p[4] for p in pairs]
+    lowers = [p[5] for p in pairs]
+    uppers = [p[6] for p in pairs]
+
+    figure = go.Figure()
+
+    # Add error bars
+    figure.add_trace(
+        go.Scatter(
+            x=rates,
+            y=labels,
+            mode="markers",
+            marker={"size": 12, "color": "#3273DC"},
+            error_x={
+                "type": "data",
+                "symmetric": False,
+                "array": [u - r for r, u in zip(rates, uppers, strict=True)],
+                "arrayminus": [r - low for r, low in zip(rates, lowers, strict=True)],
+                "color": MUTED,
+                "thickness": 2,
+                "width": 4,
+            },
+            hovertemplate=(
+                "<b>%{y}</b>"
+                "<br>Migration rate: %{x:.1%}"
+                "<br>95% CI: [%{customdata[0]:.1%}, %{customdata[1]:.1%}]"
+                "<extra></extra>"
+            ),
+            customdata=list(zip(lowers, uppers, strict=True)),
+            showlegend=False,
+        )
+    )
+
+    figure.update_layout(
+        **_layout(
+            f"Migration confidence intervals · top {len(pairs)} flows",
+            max(400, 100 + 25 * len(pairs)),
+        ),
+        margin={"l": 280, "r": 80, "t": 80, "b": 60},
+        xaxis={
+            "title": "Migration rate",
+            "range": [0, max(uppers) * 1.1 if uppers else 0.5],
+            "gridcolor": "#EDF1F6",
+            "tickformat": ".0%",
+        },
+        yaxis={"autorange": "reversed"},
+    )
+
+    return figure
+
+
+def _make_retention_exit_decomposition(data: dict, top_n: int = 15) -> go.Figure:
+    """Stacked bar: retention / exit_new_selected / exit_new_unselected / exit_no_new."""
+    sku = data["sku"]
+
+    # Sort by exit opportunities descending
+    exit_opps = sku["exit_opportunities"].to_numpy()
+    order = np.argsort(exit_opps)[::-1][:top_n]
+
+    names = [data["names"][i] for i in order]
+    ids = [data["ids"][i] for i in order]
+
+    retained = sku["retention_occasions"].to_numpy()[order]
+    exit_new_sel = sku["exit_new_selected"].to_numpy()[order]
+    exit_new_unsel = sku["exit_new_unselected_only"].to_numpy()[order]
+    exit_no_new = sku["exit_no_new_sku"].to_numpy()[order]
+    total = retained + exit_new_sel + exit_new_unsel + exit_no_new
+
+    # Convert to percentages
+    p_retained = np.divide(
+        retained, total, out=np.zeros_like(retained, dtype=float), where=total > 0
+    )
+    p_new_sel = np.divide(
+        exit_new_sel, total, out=np.zeros_like(exit_new_sel, dtype=float), where=total > 0
+    )
+    p_new_unsel = np.divide(
+        exit_new_unsel, total, out=np.zeros_like(exit_new_unsel, dtype=float), where=total > 0
+    )
+    p_no_new = np.divide(
+        exit_no_new, total, out=np.zeros_like(exit_no_new, dtype=float), where=total > 0
+    )
+
+    labels = [f"{n} ({i})" for n, i in zip(names, ids, strict=True)]
+
+    figure = go.Figure()
+
+    figure.add_trace(
+        go.Bar(
+            y=labels,
+            x=p_retained,
+            orientation="h",
+            name="Retained",
+            marker_color="#009C86",
+            hovertemplate="Retained: %{x:.1%}<extra></extra>",
+        )
+    )
+    figure.add_trace(
+        go.Bar(
+            y=labels,
+            x=p_new_sel,
+            orientation="h",
+            name="Exit → new selected",
+            marker_color="#3273DC",
+            hovertemplate="Exit → new selected: %{x:.1%}<extra></extra>",
+        )
+    )
+    figure.add_trace(
+        go.Bar(
+            y=labels,
+            x=p_new_unsel,
+            orientation="h",
+            name="Exit → new unselected only",
+            marker_color="#E48B36",
+            hovertemplate="Exit → new unselected only: %{x:.1%}<extra></extra>",
+        )
+    )
+    figure.add_trace(
+        go.Bar(
+            y=labels,
+            x=p_no_new,
+            orientation="h",
+            name="Exit → no new SKU",
+            marker_color="#D85E72",
+            hovertemplate="Exit → no new SKU: %{x:.1%}<extra></extra>",
+        )
+    )
+
+    figure.update_layout(
+        **_layout(
+            f"Retention / exit decomposition · top {len(labels)} SKUs",
+            max(400, 100 + 25 * len(labels)),
+        ),
+        margin={"l": 200, "r": 80, "t": 80, "b": 60},
+        barmode="stack",
+        xaxis={
+            "title": "Proportion of category occasions",
+            "range": [0, 1.05],
+            "gridcolor": "#EDF1F6",
+            "tickformat": ".0%",
+        },
+        yaxis={"autorange": "reversed"},
+        legend={"orientation": "h", "y": -0.15, "x": 0.5, "xanchor": "center"},
+    )
+
+    return figure
+
+
+def _make_transition_funnel(data: dict, sku_index: int) -> go.Figure:
+    """Transition opportunity funnel for a single SKU."""
+    sku = data["sku"]
+
+    trans_opps = int(sku["transition_opportunities"].to_numpy()[sku_index])
+    retained = int(sku["retention_occasions"].to_numpy()[sku_index])
+    exit_opps = int(sku["exit_opportunities"].to_numpy()[sku_index])
+    exit_new_sel = int(sku["exit_new_selected"].to_numpy()[sku_index])
+    exit_new_unsel = int(sku["exit_new_unselected_only"].to_numpy()[sku_index])
+    exit_no_new = int(sku["exit_no_new_sku"].to_numpy()[sku_index])
+
+    name = data["names"][sku_index]
+    sku_id = data["ids"][sku_index]
+
+    stages = [
+        ("Transition opportunities", trans_opps),
+        ("Retained", retained),
+        ("Exited", exit_opps),
+        ("Exit → new selected", exit_new_sel),
+        ("Exit → new unselected", exit_new_unsel),
+        ("Exit → no new SKU", exit_no_new),
+    ]
+
+    figure = go.Figure(
+        go.Funnel(
+            y=[s[0] for s in stages],
+            x=[s[1] for s in stages],
+            textinfo="value+percent initial",
+            marker={"color": ["#3273DC", "#009C86", "#D85E72", "#E48B36", "#9B62CC", "#69833B"]},
+            textfont={"size": 14},
+        )
+    )
+
+    figure.update_layout(
+        **_layout(f"Transition funnel · {name} ({sku_id})", 500),
+        margin={"l": 200, "r": 80, "t": 80, "b": 60},
+    )
+
+    return figure
+
+
+def _make_sku_profile(data: dict, sku_index: int) -> go.Figure:
+    """Detailed profile for a single SKU."""
+    sku = data["sku"]
+    name = data["names"][sku_index]
+    sku_id = data["ids"][sku_index]
+
+    buyers = int(sku["buyers"].to_numpy()[sku_index])
+    cat_orders = int(sku["category_orders"].to_numpy()[sku_index])
+    penetration = float(sku["buyer_penetration"].to_numpy()[sku_index])
+    order_support = float(sku["order_support"].to_numpy()[sku_index])
+    retention_rate = float(sku["retention_rate"].to_numpy()[sku_index])
+    exit_rate = float(sku["exit_rate"].to_numpy()[sku_index])
+    trans_opps = int(sku["transition_opportunities"].to_numpy()[sku_index])
+    exit_opps = int(sku["exit_opportunities"].to_numpy()[sku_index])
+    retained = int(sku["retention_occasions"].to_numpy()[sku_index])
+    exit_new_sel = int(sku["exit_new_selected"].to_numpy()[sku_index])
+    exit_new_unsel = int(sku["exit_new_unselected_only"].to_numpy()[sku_index])
+    exit_no_new = int(sku["exit_no_new_sku"].to_numpy()[sku_index])
+
+    figure = go.Figure()
+
+    # KPI row
+    kpis = [
+        ("Buyers", f"{buyers:,}"),
+        ("Category orders", f"{cat_orders:,}"),
+        ("Buyer penetration", f"{penetration:.1%}"),
+        ("Order support", f"{order_support:.1%}"),
+        ("Retention rate", f"{retention_rate:.1%}"),
+        ("Exit rate", f"{exit_rate:.1%}"),
+    ]
+
+    for i, (label, value) in enumerate(kpis):
+        figure.add_annotation(
+            x=0.05 + (i % 3) * 0.32,
+            y=0.95 - (i // 3) * 0.25,
+            xref="paper",
+            yref="paper",
+            text=f"<b>{label}</b><br><span style='font-size:24px'>{value}</span>",
+            showarrow=False,
+            align="center",
+            bgcolor="white",
+            bordercolor="#E5EAF2",
+            borderwidth=1,
+            borderpad=10,
+        )
+
+    # Exit decomposition pie
+    exit_labels = ["Retained", "Exit → new selected", "Exit → new unselected", "Exit → no new"]
+    exit_values = [retained, exit_new_sel, exit_new_unsel, exit_no_new]
+    exit_colors = ["#009C86", "#3273DC", "#E48B36", "#D85E72"]
+
+    figure.add_trace(
+        go.Pie(
+            labels=exit_labels,
+            values=exit_values,
+            domain={"x": [0.02, 0.48], "y": [0.02, 0.45]},
+            marker={"colors": exit_colors},
+            textinfo="label+percent",
+            hovertemplate="%{label}: %{value:,} (%{percent})<extra></extra>",
+            showlegend=False,
+        )
+    )
+
+    figure.add_annotation(
+        x=0.25,
+        y=0.48,
+        xref="paper",
+        yref="paper",
+        text="Exit decomposition",
+        showarrow=False,
+        font={"size": 14, "color": INK},
+        xanchor="center",
+    )
+
+    # Transition funnel (using bar chart instead of funnel for domain compatibility)
+    stages = [
+        ("Transition opps", trans_opps),
+        ("Retained", retained),
+        ("Exited", exit_opps),
+        ("→ new selected", exit_new_sel),
+        ("→ new unselected", exit_new_unsel),
+        ("→ no new", exit_no_new),
+    ]
+
+    figure.add_trace(
+        go.Bar(
+            y=[s[0] for s in stages],
+            x=[s[1] for s in stages],
+            orientation="h",
+            marker={"color": ["#3273DC", "#009C86", "#D85E72", "#E48B36", "#9B62CC", "#69833B"]},
+            text=[str(s[1]) for s in stages],
+            textposition="auto",
+            textfont={"size": 11},
+            hovertemplate="%{y}: %{x:,}<extra></extra>",
+            showlegend=False,
+        )
+    )
+
+    figure.update_layout(
+        **_layout(f"SKU profile · {name} ({sku_id})", 500),
+        margin={"l": 40, "r": 40, "t": 80, "b": 40},
+        barmode="overlay",
+    )
+
+    return figure
+
+
+def _make_sku_relationship_rankings(data: dict, sku_index: int, top_n: int = 10) -> go.Figure:
+    """Top relationships for a selected SKU across repertoire, basket, migration, expansion."""
+    names = data["names"]
+    ids = data["ids"]
+
+    # Repertoire (customer Jaccard)
+    repertoire_scores = data["similarity"][sku_index, :]
+    repertoire_scores[sku_index] = -1  # exclude self
+    rep_order = np.argsort(repertoire_scores)[::-1][:top_n]
+    rep_names = [f"{names[i]} ({ids[i]})" for i in rep_order]
+    rep_values = repertoire_scores[rep_order]
+
+    # Basket (basket lift)
+    basket_scores = data["basket_lift"][sku_index, :]
+    basket_scores[sku_index] = -1
+    basket_order = np.argsort(basket_scores)[::-1][:top_n]
+    basket_names = [f"{names[i]} ({ids[i]})" for i in basket_order]
+    basket_values = basket_scores[basket_order]
+
+    # Migration (outbound rate)
+    mig_out = data["migration_rate_a_to_b"][sku_index, :].copy()
+    mig_out[sku_index] = np.nan
+    # Also check reverse direction
+    mig_out_rev = data["migration_rate_b_to_a"][:, sku_index].copy()
+    mig_out_rev[sku_index] = np.nan
+    # Combine: for each other SKU, take the max rate in either direction
+    mig_combined = np.maximum(mig_out, mig_out_rev)
+    mig_order = np.argsort(np.nan_to_num(mig_combined, nan=-1))[::-1][:top_n]
+    mig_names = [f"{names[i]} ({ids[i]})" for i in mig_order]
+    mig_values = mig_combined[mig_order]
+
+    # Expansion (outbound rate)
+    exp_out = data["expansion_rate_a_to_b"][sku_index, :].copy()
+    exp_out[sku_index] = np.nan
+    exp_out_rev = data["expansion_rate_b_to_a"][:, sku_index].copy()
+    exp_out_rev[sku_index] = np.nan
+    exp_combined = np.maximum(exp_out, exp_out_rev)
+    exp_order = np.argsort(np.nan_to_num(exp_combined, nan=-1))[::-1][:top_n]
+    exp_names = [f"{names[i]} ({ids[i]})" for i in exp_order]
+    exp_values = exp_combined[exp_order]
+
+    figure = go.Figure()
+
+    # Repertoire
+    figure.add_trace(
+        go.Bar(
+            y=rep_names,
+            x=rep_values,
+            orientation="h",
+            name="Repertoire (Jaccard)",
+            marker_color="#3273DC",
+            hovertemplate="%{y}: %{x:.3f}<extra></extra>",
+        )
+    )
+    # Basket
+    figure.add_trace(
+        go.Bar(
+            y=basket_names,
+            x=basket_values,
+            orientation="h",
+            name="Basket (lift)",
+            marker_color="#009C86",
+            hovertemplate="%{y}: %{x:.2f}x<extra></extra>",
+        )
+    )
+    # Migration
+    figure.add_trace(
+        go.Bar(
+            y=mig_names,
+            x=mig_values,
+            orientation="h",
+            name="Migration (rate)",
+            marker_color="#E48B36",
+            hovertemplate="%{y}: %{x:.1%}<extra></extra>",
+        )
+    )
+    # Expansion
+    figure.add_trace(
+        go.Bar(
+            y=exp_names,
+            x=exp_values,
+            orientation="h",
+            name="Expansion (rate)",
+            marker_color="#9B62CC",
+            hovertemplate="%{y}: %{x:.1%}<extra></extra>",
+        )
+    )
+
+    figure.update_layout(
+        **_layout(
+            f"SKU relationships · {data['names'][sku_index]} ({data['ids'][sku_index]})",
+            max(500, 150 + 30 * top_n),
+        ),
+        margin={"l": 250, "r": 80, "t": 80, "b": 60},
+        barmode="overlay",
+        xaxis={"title": "Score", "gridcolor": "#EDF1F6"},
+        yaxis={"autorange": "reversed"},
+        legend={"orientation": "h", "y": -0.15, "x": 0.5, "xanchor": "center"},
+    )
+
+    return figure
+
+
 def build_figures(
     directory: str | Path,
     *,
@@ -471,9 +1528,10 @@ def write_dashboard(
     max_labels: int = 55,
     optimal_order: bool = False,
 ) -> Path:
-    """Save a standalone, interactive HTML report."""
+    """Save a standalone, interactive HTML report with all visualizations."""
     data = load_run(directory)
 
+    # Build all figures
     tree, heatmap = build_figures(
         directory,
         cut=cut,
@@ -482,6 +1540,15 @@ def write_dashboard(
         optimal_order=optimal_order,
     )
 
+    branch_stability = _make_branch_stability(data)
+    rep_basket_scatter = _make_repertoire_basket_scatter(data)
+    sku_behavior = _make_sku_behavior_map(data)
+    cluster_evolution = _make_cluster_evolution(data)
+    migration_matrix = _make_migration_matrix(data)
+    migration_rank = _make_migration_rank(data)
+    migration_ci = _make_migration_ci(data)
+    retention_exit = _make_retention_exit_decomposition(data)
+
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -489,11 +1556,19 @@ def write_dashboard(
     quality = data["report"].get("cophenetic_correlation")
     quality_text = "N/A" if quality is None else f"{quality:.2f}"
 
+    # Extended KPI cards
     cards = [
         ("CATEGORY CUSTOMERS", f"{data['report']['category_customers']:,}"),
         ("SKUS SHOWN", f"{len(data['ids']):,}"),
         ("CUSTOMER COVERAGE", f"{coverage:.1%}"),
         ("TREE FIT", quality_text),
+        ("BOOTSTRAP REPLICATES", f"{data['report']['config']['bootstrap']}"),
+        (
+            "MEDIAN BRANCH SUPPORT",
+            f"{float(np.nanmedian(data['nodes']['bootstrap_support'].to_numpy())):.0%}",
+        ),
+        ("RELIABLE MIGRATION SOURCES", f"{int(data['migration_reliable_a'].sum())}"),
+        ("COPHENETIC CORRELATION", quality_text),
     ]
 
     card_html = "".join(
@@ -501,18 +1576,32 @@ def write_dashboard(
         for label, value in cards
     )
 
-    tree_html = pio.to_html(
-        tree,
-        full_html=False,
-        include_plotlyjs=True,
-        config={"responsive": True, "displaylogo": False},
-    )
-    heatmap_html = pio.to_html(
-        heatmap,
-        full_html=False,
-        include_plotlyjs=False,
-        config={"responsive": True, "displaylogo": False},
-    )
+    # Convert all figures to HTML
+    figures = [
+        ("Customer choice tree", tree, True),
+        ("Customer repertoire similarity", heatmap, False),
+        ("Branch stability", branch_stability, False),
+        ("Repertoire vs basket affinity", rep_basket_scatter, False),
+        ("SKU behavior map", sku_behavior, False),
+        ("Migration matrix", migration_matrix, False),
+        ("Top migration flows", migration_rank, False),
+        ("Migration confidence intervals", migration_ci, False),
+        ("Retention / exit decomposition", retention_exit, False),
+    ]
+
+    if cluster_evolution is not None:
+        figures.append(("Cluster evolution", cluster_evolution, False))
+
+    html_parts = []
+    for _i, (_title, fig, include_js) in enumerate(figures):
+        html_parts.append(
+            pio.to_html(
+                fig,
+                full_html=False,
+                include_plotlyjs=include_js,
+                config={"responsive": True, "displaylogo": False},
+            )
+        )
 
     page = f"""<!doctype html>
 <html lang="en">
@@ -565,6 +1654,14 @@ section {{
     overflow: hidden;
     margin: 17px 0;
 }}
+.section-title {{
+    padding: 16px 20px;
+    border-bottom: 1px solid #E5EAF2;
+    font-size: 18px;
+    font-weight: 600;
+    color: {INK};
+}}
+.plotly-graph-div {{ width: 100%; }}
 </style>
 </head>
 <body>
@@ -576,12 +1673,16 @@ distance {cut:.2f}. Faded, dotted branches have weaker customer-bootstrap
 support. Larger leaf markers indicate more buyers.
 </p>
 <div class="cards">{card_html}</div>
-<section>{tree_html}</section>
-<section>{heatmap_html}</section>
-<p class="note">
+"""
+
+    for i, (title, _, _) in enumerate(figures):
+        page += f'<section><div class="section-title">{title}</div>{html_parts[i]}</section>\n'
+
+    page += """<p class="note">
 Shared customers suggest a common repertoire, not proven substitution.
 Same-order association is a separate basket signal. Branch support comes
-from whole-customer resampling.
+from whole-customer resampling. Migration rates describe observed
+next-category-occasion transitions, not causal substitution.
 </p>
 </main>
 </body>

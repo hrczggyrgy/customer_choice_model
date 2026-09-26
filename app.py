@@ -268,13 +268,13 @@ except Exception as exc:
 sku = data["sku"]
 names = data["names"]
 ids = data["ids"]
-positions = {int(product_id): index for index, product_id in enumerate(ids)}
+positions = {product_id: index for index, product_id in enumerate(ids)}
 options = list(range(len(ids)))
 
 
 def label(index: int) -> str:
     text = names[index]
-    return f"{text[:72]}{'…' if len(text) > 72 else ''} · {int(ids[index])}"
+    return f"{text[:72]}{'…' if len(text) > 72 else ''} · {ids[index]}"
 
 
 summary, tree_tab, pairs_tab, exports = st.tabs(
@@ -337,10 +337,10 @@ with pairs_tab:
     if first == second:
         st.info("Select two different SKUs.")
     else:
-        a, b = sorted([int(ids[first]), int(ids[second])])
+        a_id, b_id = ids[first], ids[second]
         pair = (
             pl.scan_parquet(folder / "pair_metrics.parquet")
-            .filter((pl.col("product_id_a") == a) & (pl.col("product_id_b") == b))
+            .filter((pl.col("product_id_a") == a_id) & (pl.col("product_id_b") == b_id))
             .collect()
         )
         if pair.height:
