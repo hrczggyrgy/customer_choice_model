@@ -1281,6 +1281,8 @@ def _make_transition_funnel(data: dict, sku_index: int) -> go.Figure:
 
 def _make_sku_profile(data: dict, sku_index: int) -> go.Figure:
     """Detailed profile for a single SKU."""
+    from plotly.subplots import make_subplots
+
     sku = data["sku"]
     name = data["names"][sku_index]
     sku_id = data["ids"][sku_index]
@@ -1298,34 +1300,47 @@ def _make_sku_profile(data: dict, sku_index: int) -> go.Figure:
     exit_new_unsel = int(sku["exit_new_unselected_only"].to_numpy()[sku_index])
     exit_no_new = int(sku["exit_no_new_sku"].to_numpy()[sku_index])
 
-    figure = go.Figure()
+    # Create subplots: 3 rows, 3 cols
+    # Row 1: 3 KPIs
+    # Row 2: 3 KPIs
+    # Row 3: pie (col 1) + bar spanning cols 2-3
+    figure = make_subplots(
+        rows=3,
+        cols=3,
+        row_heights=[0.3, 0.3, 0.4],
+        specs=[
+            [{"type": "indicator"}, {"type": "indicator"}, {"type": "indicator"}],
+            [{"type": "indicator"}, {"type": "indicator"}, {"type": "indicator"}],
+            [{"type": "domain"}, {"type": "bar"}, {"type": "bar"}],
+        ],
+        subplot_titles=("", "", "", "", "", "Exit decomposition", "Transition funnel"),
+        vertical_spacing=0.08,
+        horizontal_spacing=0.05,
+    )
 
-    # KPI row
+    # KPI indicators in row 1 and 2 (3 cols each)
     kpis = [
-        ("Buyers", f"{buyers:,}"),
-        ("Category orders", f"{cat_orders:,}"),
-        ("Buyer penetration", f"{penetration:.1%}"),
-        ("Order support", f"{order_support:.1%}"),
-        ("Retention rate", f"{retention_rate:.1%}"),
-        ("Exit rate", f"{exit_rate:.1%}"),
+        ("Buyers", buyers, ",.0f", "", 1, 1),
+        ("Category orders", cat_orders, ",.0f", "", 1, 2),
+        ("Buyer penetration", penetration * 100, ".1f", "%", 1, 3),
+        ("Order support", order_support * 100, ".1f", "%", 2, 1),
+        ("Retention rate", retention_rate * 100, ".1f", "%", 2, 2),
+        ("Exit rate", exit_rate * 100, ".1f", "%", 2, 3),
     ]
 
-    for i, (label, value) in enumerate(kpis):
-        figure.add_annotation(
-            x=0.05 + (i % 3) * 0.32,
-            y=0.95 - (i // 3) * 0.25,
-            xref="paper",
-            yref="paper",
-            text=f"<b>{label}</b><br><span style='font-size:24px'>{value}</span>",
-            showarrow=False,
-            align="center",
-            bgcolor="white",
-            bordercolor="#E5EAF2",
-            borderwidth=1,
-            borderpad=10,
+    for label, value, fmt, suffix, row, col in kpis:
+        figure.add_trace(
+            go.Indicator(
+                mode="number",
+                value=value,
+                title={"text": label, "font": {"size": 12}},
+                number={"font": {"size": 20}, "valueformat": fmt, "suffix": suffix},
+            ),
+            row=row,
+            col=col,
         )
 
-    # Exit decomposition pie
+    # Exit decomposition pie (row 3, col 1)
     exit_labels = ["Retained", "Exit → new selected", "Exit → new unselected", "Exit → no new"]
     exit_values = [retained, exit_new_sel, exit_new_unsel, exit_no_new]
     exit_colors = ["#009C86", "#3273DC", "#E48B36", "#D85E72"]
@@ -1334,26 +1349,16 @@ def _make_sku_profile(data: dict, sku_index: int) -> go.Figure:
         go.Pie(
             labels=exit_labels,
             values=exit_values,
-            domain={"x": [0.02, 0.48], "y": [0.02, 0.45]},
             marker={"colors": exit_colors},
             textinfo="label+percent",
             hovertemplate="%{label}: %{value:,} (%{percent})<extra></extra>",
             showlegend=False,
-        )
+        ),
+        row=3,
+        col=1,
     )
 
-    figure.add_annotation(
-        x=0.25,
-        y=0.48,
-        xref="paper",
-        yref="paper",
-        text="Exit decomposition",
-        showarrow=False,
-        font={"size": 14, "color": INK},
-        xanchor="center",
-    )
-
-    # Transition funnel (using bar chart instead of funnel for domain compatibility)
+    # Transition funnel (bar chart) - row 3, col 2-3
     stages = [
         ("Transition opps", trans_opps),
         ("Retained", retained),
@@ -1374,13 +1379,17 @@ def _make_sku_profile(data: dict, sku_index: int) -> go.Figure:
             textfont={"size": 11},
             hovertemplate="%{y}: %{x:,}<extra></extra>",
             showlegend=False,
-        )
+        ),
+        row=3,
+        col=2,
     )
 
+    # Add a spacer trace in col 3 to keep layout balanced
+    figure.add_trace(go.Scatter(x=[], y=[], showlegend=False, hoverinfo="skip"), row=3, col=3)
+
     figure.update_layout(
-        **_layout(f"SKU profile · {name} ({sku_id})", 500),
-        margin={"l": 40, "r": 40, "t": 80, "b": 40},
-        barmode="overlay",
+        **_layout(f"SKU profile · {name} ({sku_id})", 700),
+        margin={"l": 60, "r": 40, "t": 100, "b": 60},
     )
 
     return figure
