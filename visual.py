@@ -132,7 +132,33 @@ def load_run(directory: str | Path) -> dict:
     expansion_rate_a_to_b = np.full((n, n), np.nan, dtype=float)
     expansion_rate_b_to_a = np.full((n, n), np.nan, dtype=float)
 
-    # Batch-fill matrices using vectorized operations
+    _fields = [
+        "product_id_a",
+        "product_id_b",
+        "customer_jaccard",
+        "order_jaccard",
+        "shared_customers",
+        "basket_lift",
+        "bootstrap_pair_cocluster",
+        "customer_overlap_lift",
+        "expected_shared_customers",
+        "excess_shared_customers",
+        "migration_a_to_b",
+        "migration_b_to_a",
+        "migration_rate_a_to_b",
+        "migration_rate_b_to_a",
+        "migration_ci_lower_a_to_b",
+        "migration_ci_upper_a_to_b",
+        "migration_ci_lower_b_to_a",
+        "migration_ci_upper_b_to_a",
+        "migration_reliable_a",
+        "migration_reliable_b",
+        "expansion_a_to_b",
+        "expansion_b_to_a",
+        "expansion_rate_a_to_b",
+        "expansion_rate_b_to_a",
+    ]
+
     a_idx = np.array([positions[pid] for pid in pairs["product_id_a"].to_list()])
     b_idx = np.array([positions[pid] for pid in pairs["product_id_b"].to_list()])
 
@@ -262,9 +288,9 @@ def _make_tree(
     figure = go.Figure()
 
     for index, (left, right, _height, _) in enumerate(linkage):
-        node = n + index
         left = int(left)
         right = int(right)
+        node = n + index
 
         x, _ = locations[node]
         left_x, left_y = locations[left]
@@ -281,7 +307,6 @@ def _make_tree(
         opacity = 0.3 + 0.7 * support if measured else 0.75
         dash = "dot" if measured and support < 0.75 else "solid"
 
-        # Three contiguous segments form a horizontal dendrogram branch.
         figure.add_trace(
             go.Scatter(
                 x=[left_x, x, x, right_x],
@@ -380,7 +405,7 @@ def _make_tree(
 
     figure.update_layout(
         **_layout(
-            "Customer Choice Tree",
+            "Customer Choice Tree · shared buyers, not proven substitution",
             max(630, min(2400, 145 + 22 * n)),
         ),
         margin={"l": 280, "r": 35, "t": 100, "b": 80},
@@ -491,23 +516,23 @@ def _make_heatmap(data: dict, order: list[int]) -> go.Figure:
     return figure
 
 
-def _make_branch_stability(data: dict, min_support: float = 0.0) -> go.Figure:
+def _make_branch_stability(
+    data: dict,
+    min_support: float = 0.0,
+) -> go.Figure:
     """Horizontal bar chart of branch bootstrap support."""
     supports = data["nodes"]["bootstrap_support"].to_numpy()
     n = len(data["ids"])
     node_ids = np.arange(n, 2 * n - 1)
 
-    # Filter by minimum support
     mask = np.isfinite(supports) & (supports >= min_support)
     filtered_supports = supports[mask]
     filtered_nodes = node_ids[mask]
 
-    # Sort by support descending
     sort_idx = np.argsort(filtered_supports)[::-1]
     filtered_supports = filtered_supports[sort_idx]
     filtered_nodes = filtered_nodes[sort_idx]
 
-    # Create labels
     labels = [f"Branch {int(node)}" for node in filtered_nodes]
     percentages = [f"{s:.0%}" for s in filtered_supports]
 
@@ -555,13 +580,12 @@ def _make_repertoire_basket_scatter(
     n = len(data["ids"])
     a, b = np.triu_indices(n, 1)
 
-    x = data["similarity"][a, b]  # customer_jaccard
-    y = data["basket_lift"][a, b]  # basket_lift
+    x = data["similarity"][a, b]
+    y = data["basket_lift"][a, b]
     sizes = data["shared_buyers"][a, b]
     cocluster = data["bootstrap_cocluster"][a, b]
     reliable = data["migration_reliable_a"][a, b] | data["migration_reliable_b"][a, b]
 
-    # Filter
     mask = (sizes >= min_shared) & (cocluster >= min_cocluster) & np.isfinite(x) & np.isfinite(y)
     x = x[mask]
     y = y[mask]
@@ -571,11 +595,9 @@ def _make_repertoire_basket_scatter(
     pair_a = a[mask]
     pair_b = b[mask]
 
-    # Normalize sizes for marker
     max_size = max(sizes.max(), 1) if len(sizes) > 0 else 1
     marker_sizes = 8 + 20 * np.sqrt(sizes / max_size)
 
-    # Color by co-cluster support
     colors = np.where(
         np.isfinite(cocluster),
         np.clip(cocluster * 255, 0, 255).astype(int),
@@ -584,7 +606,6 @@ def _make_repertoire_basket_scatter(
 
     figure = go.Figure()
 
-    # Add quadrant lines
     x_median = np.median(x) if len(x) > 0 else 0.5
     y_median = np.median(y) if len(y) > 0 else 1.0
 
@@ -647,7 +668,6 @@ def _make_repertoire_basket_scatter(
         },
     )
 
-    # Add quadrant annotations
     if len(x) > 0:
         figure.add_annotation(
             x=0.95,
@@ -706,7 +726,6 @@ def _make_sku_behavior_map(data: dict) -> go.Figure:
     names = data["names"]
     ids = data["ids"]
 
-    # Filter valid values
     mask = np.isfinite(penetration) & np.isfinite(retention_rate) & np.isfinite(exit_opps)
     penetration = penetration[mask]
     retention_rate = retention_rate[mask]
@@ -714,7 +733,6 @@ def _make_sku_behavior_map(data: dict) -> go.Figure:
     filtered_names = [names[i] for i in np.where(mask)[0]]
     filtered_ids = [ids[i] for i in np.where(mask)[0]]
 
-    # Handle empty data (no switching)
     if len(penetration) == 0:
         figure = go.Figure()
         figure.update_layout(
@@ -768,7 +786,6 @@ def _make_sku_behavior_map(data: dict) -> go.Figure:
         )
     )
 
-    # Add median lines
     if len(penetration) > 0:
         x_med = np.median(penetration)
         y_med = np.median(retention_rate)
@@ -801,22 +818,18 @@ def _make_cluster_evolution(data: dict) -> go.Figure | None:
     if assignments is None:
         return None
 
-    # Find cluster columns (cluster_k4, cluster_k6, cluster_k8, etc.)
     cluster_cols = [c for c in assignments.columns if c.startswith("cluster_k")]
     if len(cluster_cols) < 2:
         return None
 
-    # Sort by K value
     cluster_cols.sort(key=lambda x: int(x.replace("cluster_k", "")))
 
-    # Build Sankey data
     labels = []
     label_to_idx = {}
     sources = []
     targets = []
     values = []
 
-    # Track cluster sizes at each K
     cluster_sizes = {}
 
     for _k_idx, col in enumerate(cluster_cols):
@@ -831,7 +844,6 @@ def _make_cluster_evolution(data: dict) -> go.Figure | None:
             mask = clusters == cl
             cluster_sizes[(k_val, cl)] = int(mask.sum())
 
-    # Build flows between consecutive K levels
     for i in range(len(cluster_cols) - 1):
         col_from = cluster_cols[i]
         col_to = cluster_cols[i + 1]
@@ -856,7 +868,6 @@ def _make_cluster_evolution(data: dict) -> go.Figure | None:
     if not sources:
         return None
 
-    # Color by K level
     node_colors = []
     for label in labels:
         k_val = int(label.split(":")[0].replace("K=", ""))
@@ -902,22 +913,18 @@ def _make_migration_matrix(
     migration_rate = data["migration_rate_a_to_b"]
     reliable_a = data["migration_reliable_a"]
 
-    # Create full matrix (migration_rate_a_to_b is upper triangular)
     matrix = np.full((n, n), np.nan)
     a, b = np.triu_indices(n, 1)
     matrix[a, b] = migration_rate[a, b]
     matrix[b, a] = data["migration_rate_b_to_a"][a, b]
 
-    # Build reliability mask
     reliable = np.zeros((n, n), dtype=bool)
     reliable[a, b] = reliable_a[a, b]
     reliable[b, a] = data["migration_reliable_b"][a, b]
 
-    # Apply reliability filter
     if min_reliability:
         matrix = np.where(reliable, matrix, np.nan)
 
-    # Optionally filter to top N SKUs by exit opportunities
     if top_n is not None:
         exit_opps = data["sku"]["exit_opportunities"].to_numpy()
         top_indices = np.argsort(exit_opps)[::-1][:top_n]
@@ -961,7 +968,6 @@ def _make_migration_rank(data: dict, top_n: int = 20) -> go.Figure:
     n = len(data["ids"])
     a, b = np.triu_indices(n, 1)
 
-    # Combine both directions
     migration_a = data["migration_a_to_b"][a, b]
     migration_b = data["migration_b_to_a"][a, b]
     rate_a = data["migration_rate_a_to_b"][a, b]
@@ -969,7 +975,6 @@ def _make_migration_rank(data: dict, top_n: int = 20) -> go.Figure:
     reliable_a = data["migration_reliable_a"][a, b]
     reliable_b = data["migration_reliable_b"][a, b]
 
-    # Build combined arrays
     pairs = []
     for i in range(len(a)):
         if reliable_a[i] and migration_a[i] > 0:
@@ -981,7 +986,6 @@ def _make_migration_rank(data: dict, top_n: int = 20) -> go.Figure:
                     data["ids"][b[i]],
                     int(migration_a[i]),
                     float(rate_a[i]),
-                    "a→b",
                 )
             )
         if reliable_b[i] and migration_b[i] > 0:
@@ -993,7 +997,6 @@ def _make_migration_rank(data: dict, top_n: int = 20) -> go.Figure:
                     data["ids"][a[i]],
                     int(migration_b[i]),
                     float(rate_b[i]),
-                    "b→a",
                 )
             )
 
@@ -1002,7 +1005,6 @@ def _make_migration_rank(data: dict, top_n: int = 20) -> go.Figure:
         figure.update_layout(**_layout("Top migration flows · none reliable", 400))
         return figure
 
-    # Sort by count descending
     pairs.sort(key=lambda x: x[4], reverse=True)
     pairs = pairs[:top_n]
 
@@ -1086,7 +1088,6 @@ def _make_migration_ci(data: dict, top_n: int = 15) -> go.Figure:
         figure.update_layout(**_layout("Migration confidence intervals · none reliable", 400))
         return figure
 
-    # Sort by rate descending
     pairs.sort(key=lambda x: x[4], reverse=True)
     pairs = pairs[:top_n]
 
@@ -1097,7 +1098,6 @@ def _make_migration_ci(data: dict, top_n: int = 15) -> go.Figure:
 
     figure = go.Figure()
 
-    # Add error bars
     figure.add_trace(
         go.Scatter(
             x=rates,
@@ -1116,7 +1116,7 @@ def _make_migration_ci(data: dict, top_n: int = 15) -> go.Figure:
             hovertemplate=(
                 "<b>%{y}</b>"
                 "<br>Migration rate: %{x:.1%}"
-                "<br>95% CI: [%{customdata[0]:.1%}, %{customdata[1]:.1%}]"
+                "<br>95% CI: [%{%customdata[0]:.1%}, %{customdata[1]:.1%}]"
                 "<extra></extra>"
             ),
             customdata=list(zip(lowers, uppers, strict=True)),
@@ -1146,7 +1146,6 @@ def _make_retention_exit_decomposition(data: dict, top_n: int = 15) -> go.Figure
     """Stacked bar: retention / exit_new_selected / exit_new_unselected / exit_no_new."""
     sku = data["sku"]
 
-    # Sort by exit opportunities descending
     exit_opps = sku["exit_opportunities"].to_numpy()
     order = np.argsort(exit_opps)[::-1][:top_n]
 
@@ -1159,7 +1158,6 @@ def _make_retention_exit_decomposition(data: dict, top_n: int = 15) -> go.Figure
     exit_no_new = sku["exit_no_new_sku"].to_numpy()[order]
     total = retained + exit_new_sel + exit_new_unsel + exit_no_new
 
-    # Convert to percentages
     p_retained = np.divide(
         retained, total, out=np.zeros_like(retained, dtype=float), where=total > 0
     )
@@ -1253,21 +1251,25 @@ def _make_transition_funnel(data: dict, sku_index: int) -> go.Figure:
     sku_id = data["ids"][sku_index]
 
     stages = [
-        ("Transition opportunities", trans_opps),
+        ("Transition opps", trans_opps),
         ("Retained", retained),
         ("Exited", exit_opps),
-        ("Exit → new selected", exit_new_sel),
-        ("Exit → new unselected", exit_new_unsel),
-        ("Exit → no new SKU", exit_no_new),
+        ("→ new selected", exit_new_sel),
+        ("→ new unselected", exit_new_unsel),
+        ("→ no new", exit_no_new),
     ]
 
     figure = go.Figure(
-        go.Funnel(
+        go.Bar(
             y=[s[0] for s in stages],
             x=[s[1] for s in stages],
-            textinfo="value+percent initial",
+            orientation="h",
             marker={"color": ["#3273DC", "#009C86", "#D85E72", "#E48B36", "#9B62CC", "#69833B"]},
-            textfont={"size": 14},
+            text=[str(s[1]) for s in stages],
+            textposition="auto",
+            textfont={"size": 11},
+            hovertemplate="%{y}: %{x:,}<extra></extra>",
+            showlegend=False,
         )
     )
 
@@ -1279,93 +1281,55 @@ def _make_transition_funnel(data: dict, sku_index: int) -> go.Figure:
     return figure
 
 
-def _make_sku_profile(data: dict, sku_index: int) -> go.Figure:
-    """Detailed profile for a single SKU."""
+def _make_sku_exit_decomposition(data: dict, sku_index: int) -> go.Figure:
+    """SKU exit decomposition: donut + transition funnel bars in side-by-side layout."""
     from plotly.subplots import make_subplots
 
     sku = data["sku"]
     name = data["names"][sku_index]
     sku_id = data["ids"][sku_index]
 
-    buyers = int(sku["buyers"].to_numpy()[sku_index])
-    cat_orders = int(sku["category_orders"].to_numpy()[sku_index])
-    penetration = float(sku["buyer_penetration"].to_numpy()[sku_index])
-    order_support = float(sku["order_support"].to_numpy()[sku_index])
-    retention_rate = float(sku["retention_rate"].to_numpy()[sku_index])
-    exit_rate = float(sku["exit_rate"].to_numpy()[sku_index])
-    trans_opps = int(sku["transition_opportunities"].to_numpy()[sku_index])
-    exit_opps = int(sku["exit_opportunities"].to_numpy()[sku_index])
     retained = int(sku["retention_occasions"].to_numpy()[sku_index])
     exit_new_sel = int(sku["exit_new_selected"].to_numpy()[sku_index])
     exit_new_unsel = int(sku["exit_new_unselected_only"].to_numpy()[sku_index])
     exit_no_new = int(sku["exit_no_new_sku"].to_numpy()[sku_index])
 
-    # Create subplots: 3 rows, 3 cols
-    # Row 1: 3 KPIs
-    # Row 2: 3 KPIs
-    # Row 3: pie (col 1) + bar spanning cols 2-3
+    name = data["names"][sku_index]
+    sku_id = data["ids"][sku_index]
+
+    # Exit decomposition donut + transition funnel bars in side-by-side layout
     figure = make_subplots(
-        rows=3,
-        cols=3,
-        row_heights=[0.3, 0.3, 0.4],
-        specs=[
-            [{"type": "indicator"}, {"type": "indicator"}, {"type": "indicator"}],
-            [{"type": "indicator"}, {"type": "indicator"}, {"type": "indicator"}],
-            [{"type": "domain"}, {"type": "bar"}, {"type": "bar"}],
-        ],
-        subplot_titles=("", "", "", "", "", "Exit decomposition", "Transition funnel"),
-        vertical_spacing=0.08,
-        horizontal_spacing=0.05,
+        rows=1,
+        cols=2,
+        column_widths=[0.38, 0.62],
+        specs=[[{"type": "domain"}, {"type": "bar"}]],
+        subplot_titles=["Exit decomposition", "Transition funnel"],
+        horizontal_spacing=0.08,
     )
-
-    # KPI indicators in row 1 and 2 (3 cols each)
-    kpis = [
-        ("Buyers", buyers, ",.0f", "", 1, 1),
-        ("Category orders", cat_orders, ",.0f", "", 1, 2),
-        ("Buyer penetration", penetration * 100, ".1f", "%", 1, 3),
-        ("Order support", order_support * 100, ".1f", "%", 2, 1),
-        ("Retention rate", retention_rate * 100, ".1f", "%", 2, 2),
-        ("Exit rate", exit_rate * 100, ".1f", "%", 2, 3),
-    ]
-
-    for label, value, fmt, suffix, row, col in kpis:
-        figure.add_trace(
-            go.Indicator(
-                mode="number",
-                value=value,
-                title={"text": label, "font": {"size": 12}},
-                number={"font": {"size": 20}, "valueformat": fmt, "suffix": suffix},
-            ),
-            row=row,
-            col=col,
-        )
-
-    # Exit decomposition pie (row 3, col 1)
-    exit_labels = ["Retained", "Exit → new selected", "Exit → new unselected", "Exit → no new"]
-    exit_values = [retained, exit_new_sel, exit_new_unsel, exit_no_new]
-    exit_colors = ["#009C86", "#3273DC", "#E48B36", "#D85E72"]
 
     figure.add_trace(
         go.Pie(
-            labels=exit_labels,
-            values=exit_values,
-            marker={"colors": exit_colors},
-            textinfo="label+percent",
+            labels=["Retained", "Exit → new selected", "Exit → new unselected", "Exit → no new"],
+            values=[retained, exit_new_sel, exit_new_unsel, exit_no_new],
+            marker={"colors": ["#009C86", "#3273DC", "#E48B36", "#D85E72"]},
+            hole=0.42,
+            textinfo="percent",
             hovertemplate="%{label}: %{value:,} (%{percent})<extra></extra>",
-            showlegend=False,
+            showlegend=True,
+            domain={"x": [0.0, 0.36], "y": [0.0, 1.0]},
         ),
-        row=3,
+        row=1,
         col=1,
     )
 
-    # Transition funnel (bar chart) - row 3, col 2-3
+    # Transition funnel horizontal bars
     stages = [
-        ("Transition opps", trans_opps),
-        ("Retained", retained),
-        ("Exited", exit_opps),
-        ("→ new selected", exit_new_sel),
-        ("→ new unselected", exit_new_unsel),
-        ("→ no new", exit_no_new),
+        ("Transition opps", int(data["sku"]["transition_opportunities"].to_numpy()[0])),
+        ("Retained", int(data["sku"]["retention_occasions"].to_numpy()[0])),
+        ("Exited", int(data["sku"]["exit_opportunities"].to_numpy()[0])),
+        ("→ new selected", int(data["sku"]["exit_new_selected"].to_numpy()[0])),
+        ("→ new unselected", int(data["sku"]["exit_new_unselected_only"].to_numpy()[0])),
+        ("→ no new", int(data["sku"]["exit_no_new_sku"].to_numpy()[0])),
     ]
 
     figure.add_trace(
@@ -1375,21 +1339,41 @@ def _make_sku_profile(data: dict, sku_index: int) -> go.Figure:
             orientation="h",
             marker={"color": ["#3273DC", "#009C86", "#D85E72", "#E48B36", "#9B62CC", "#69833B"]},
             text=[str(s[1]) for s in stages],
-            textposition="auto",
+            textposition="outside",
             textfont={"size": 11},
             hovertemplate="%{y}: %{x:,}<extra></extra>",
             showlegend=False,
         ),
-        row=3,
+        row=1,
         col=2,
     )
 
-    # Add a spacer trace in col 3 to keep layout balanced
-    figure.add_trace(go.Scatter(x=[], y=[], showlegend=False, hoverinfo="skip"), row=3, col=3)
-
     figure.update_layout(
-        **_layout(f"SKU profile · {name} ({sku_id})", 700),
-        margin={"l": 60, "r": 40, "t": 100, "b": 60},
+        **_layout(f"SKU exit decomposition · {name} ({sku_id})", 500),
+        margin={"l": 160, "r": 100, "t": 80, "b": 60},
+        legend={"orientation": "v", "x": 0.0, "y": -0.18, "xanchor": "left"},
+    )
+
+    # Critical: give the bar chart's x-axis enough room for outside text
+    max_count = max(
+        int(data["sku"]["transition_opportunities"].to_numpy()[0]),
+        int(data["sku"]["retention_occasions"].to_numpy()[0]),
+        int(data["sku"]["exit_opportunities"].to_numpy()[0]),
+        int(data["sku"]["exit_new_selected"].to_numpy()[0]),
+        int(data["sku"]["exit_new_unselected_only"].to_numpy()[0]),
+        int(data["sku"]["exit_no_new_sku"].to_numpy()[0]),
+    )
+    figure.update_xaxes(
+        range=[0, max_count * 1.30],
+        row=1,
+        col=2,
+        gridcolor="#EDF1F6",
+        title="Count",
+    )
+    figure.update_yaxes(
+        autorange="reversed",
+        row=1,
+        col=2,
     )
 
     return figure
@@ -1587,7 +1571,7 @@ def write_dashboard(
 
     # Convert all figures to HTML
     figures = [
-        ("Customer Choice Tree", tree, True),
+        ("Customer choice tree", tree, True),
         ("Customer repertoire similarity", heatmap, False),
         ("Branch stability", branch_stability, False),
         ("Repertoire vs basket affinity", rep_basket_scatter, False),
@@ -1645,30 +1629,30 @@ h1 {{ margin-bottom: 8px; }}
     min-width: 175px;
     padding: 18px 23px;
     background: white;
-    border: 1px solid #E5EAF2;
-    border-radius: 12px;
+    border: 1px solid #E5EAF2
+    border-radius: 12px
 }}
 .card small {{
-    display: block;
-    color: {MUTED};
-    letter-spacing: 1px;
-    font-size: 10px;
-    margin-bottom: 9px;
+    display: block
+    color: {MUTED}
+    letter-spacing: 1px
+    font-size: 10px
+    margin-bottom: 9px
 }}
 .card strong {{ font-size: 25px; }}
 section {{
-    background: white;
-    border: 1px solid #E5EAF2;
-    border-radius: 14px;
-    overflow: hidden;
-    margin: 17px 0;
+    background: white
+    border: 1px solid #E5EAF2
+    border-radius: 14px
+    overflow: hidden
+    margin: 17px 0
 }}
 .section-title {{
-    padding: 16px 20px;
-    border-bottom: 1px solid #E5EAF2;
-    font-size: 18px;
-    font-weight: 600;
-    color: {INK};
+    padding: 16px 20px
+    border-bottom: 1px solid #E5EAF2
+    font-size: 18px
+    font-weight: 600
+    color: {INK}
 }}
 .plotly-graph-div {{ width: 100%; }}
 </style>

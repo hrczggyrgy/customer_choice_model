@@ -27,9 +27,8 @@ from visual import (
     _make_repertoire_basket_scatter,
     _make_retention_exit_decomposition,
     _make_sku_behavior_map,
-    _make_sku_profile,
+    _make_sku_exit_decomposition,
     _make_sku_relationship_rankings,
-    _make_transition_funnel,
     build_figures,
     load_run,
 )
@@ -423,8 +422,32 @@ with sku_tab:
         st.plotly_chart(_make_sku_behavior_map(data), use_container_width=True)
         st.markdown("### SKU detail")
         selected_sku = st.selectbox("Select SKU", options, format_func=label, key="sku_detail")
-        st.plotly_chart(_make_sku_profile(data, selected_sku), use_container_width=True)
-        st.plotly_chart(_make_transition_funnel(data, selected_sku), use_container_width=True)
+
+        # KPI metrics using native Streamlit metrics
+        sku_df = data["sku"]
+        buyers = int(sku_df["buyers"].to_numpy()[selected_sku])
+        cat_orders = int(sku_df["category_orders"].to_numpy()[selected_sku])
+        penetration = float(sku_df["buyer_penetration"].to_numpy()[selected_sku])
+        order_support = float(sku_df["order_support"].to_numpy()[selected_sku])
+        retention_rate = float(sku_df["retention_rate"].to_numpy()[selected_sku])
+        exit_rate = float(sku_df["exit_rate"].to_numpy()[selected_sku])
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Buyers", f"{buyers:,}")
+        col2.metric("Category orders", f"{cat_orders:,}")
+        col3.metric("Buyer penetration", f"{penetration:.1%}")
+
+        col4, col5, col6 = st.columns(3)
+        col4.metric("Order support", f"{order_support:.1%}")
+        col5.metric(
+            "Retention rate",
+            f"{retention_rate:.1%}",
+            delta=f"Exit {exit_rate:.1%}",
+            delta_color="inverse",
+        )
+        col6.metric("Exit rate", f"{exit_rate:.1%}")
+
+        st.plotly_chart(_make_sku_exit_decomposition(data, selected_sku), use_container_width=True)
         st.plotly_chart(
             _make_sku_relationship_rankings(data, selected_sku), use_container_width=True
         )
