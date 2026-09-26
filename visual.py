@@ -714,7 +714,27 @@ def _make_sku_behavior_map(data: dict) -> go.Figure:
     filtered_names = [names[i] for i in np.where(mask)[0]]
     filtered_ids = [ids[i] for i in np.where(mask)[0]]
 
-    max_exits = max(exit_opps.max(), 1) if len(exit_opps) > 0 else 1
+    # Handle empty data (no switching)
+    if len(penetration) == 0:
+        figure = go.Figure()
+        figure.update_layout(
+            **_layout("SKU behavior map · penetration vs retention (no switching data)", 400),
+            margin={"l": 80, "r": 80, "t": 80, "b": 80},
+            xaxis={"title": "Buyer penetration", "gridcolor": "#EDF1F6"},
+            yaxis={"title": "Retention rate", "gridcolor": "#EDF1F6"},
+        )
+        figure.add_annotation(
+            text="No switching data available. Enable order sequence in sidebar.",
+            xref="paper",
+            yref="paper",
+            x=0.5,
+            y=0.5,
+            showarrow=False,
+            font={"size": 14, "color": MUTED},
+        )
+        return figure
+
+    max_exits = max(exit_opps.max(), 1)
     marker_sizes = 8 + 25 * np.sqrt(exit_opps / max_exits)
 
     figure = go.Figure(

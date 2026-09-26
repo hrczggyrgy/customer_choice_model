@@ -227,7 +227,7 @@ def build_transitions(full, skus):
     exit_events = []
     pair_events = []
 
-    # Vectorized consecutive-order self-join
+    # Vectorized consecutive-order self-join using Polars list expressions
     basket_lf = basket.lazy()
     prev = basket_lf.rename(
         {
@@ -244,46 +244,86 @@ def build_transitions(full, skus):
         how="inner",
     )
 
-    # Collect the joined pairs
-    pairs_df = pairs_lf.collect()
+    # Compute set operations using Polars list expressions
+    pairs_lf = pairs_lf.with_columns(
+        [
+            pl.col("items").list.set_difference(pl.col("prev_items")).alias("added"),
+            pl.col("items").list.set_intersection(pl.col("prev_items")).alias("retained_items"),
+        ]
+    )
 
+    # Filter to selected SKUs only
+    selected_list = list(selected)
+    pairs_lf = pairs_lf.with_columns(
+        [
+            pl.col("added").list.filter(pl.element().is_in(selected_list)).alias("new_selected"),
+            pl.col("prev_items")
+            .list.filter(pl.element().is_in(selected_list))
+            .alias("prev_selected"),
+        ]
+    )
+
+    pairs_df = pairs_lf.collect()
     occasion_pairs = pairs_df.height
 
     if occasion_pairs > 0:
-        # Convert to numpy for fast set operations
-        prev_items_list = pairs_df["prev_items"].to_list()
-        curr_items_list = pairs_df["items"].to_list()
-        users = pairs_df["user_id"].to_numpy()
+        # Compute retained = prev_selected ∩ retained_items
+        pairs_df = pairs_df.with_columns(
+            retained=pl.col("prev_selected").list.set_intersection(pl.col("retained_items"))
+        )
 
-        # Process each pair using vectorized operations where possible
-        for prev_items, curr_items, user in zip(
-            prev_items_list, curr_items_list, users, strict=True
-        ):
-            prev_set = set(prev_items)
-            curr_set = set(curr_items)
+        # Aggregate opportunities: count of prev_selected per SKU
+        opps = pairs_df.explode("prev_selected").group_by("prev_selected").len()
+        for row in opps.iter_rows():
+            state["opportunities"][row[0]] += row[1]
 
-            added = curr_set - prev_set
-            new_selected = added & selected
-            prev_selected = prev_set & selected
+        # Aggregate retained: count of retained per SKU
+        ret = pairs_df.explode("retained").group_by("retained").len()
+        for row in ret.iter_rows():
+            state["retained"][row[0]] += row[1]
 
-            for a in prev_selected:
-                state["opportunities"][a] += 1
-                if a in curr_set:
-                    state["retained"][a] += 1
+        # For each pair, compute exits = prev_selected - retained
+        pairs_df = pairs_df.with_columns(
+            exited=pl.col("prev_selected").list.set_difference(pl.col("retained"))
+        )
+
+        # Aggregate exits
+        ex = pairs_df.explode("exited").group_by("exited").len()
+        for row in ex.iter_rows():
+            state["exits"][row[0]] += row[1]
+
+        # For each pair, determine kind based on new_selected and added
+        pairs_df = pairs_df.with_columns(
+            kind=pl.when(pl.col("new_selected").list.len() > 0)
+            .then(pl.lit("exit_new_selected"))
+            .when(pl.col("added").list.len() > 0)
+            .then(pl.lit("exit_new_unselected_only"))
+            .otherwise(pl.lit("exit_no_new"))
+        )
+
+        # Process exits: for each exited SKU, apply the pair's kind
+        exited_df = pairs_df.explode("exited").select(["user_id", "exited", "kind", "new_selected"])
+        if exited_df.height > 0:
+            ex_kind = exited_df.group_by(["exited", "kind"]).len()
+            for a, kind, count in ex_kind.iter_rows():
+                state[kind][a] += count
+
+            # Build exit_events and migration/pair_events
+            for row in exited_df.iter_rows(named=True):
+                user, a, kind = row["user_id"], row["exited"], row["kind"]
+                exit_events.append((user, a))
+                for b in row["new_selected"]:
+                    migration[a, b] = migration.get((a, b), 0) + 1
+                    pair_events.append((user, a, b))
+
+        # Expansion: cross product of retained a and new_selected b
+        for row in pairs_df.iter_rows(named=True):
+            retained = row["retained"]
+            new_selected = row["new_selected"]
+            if retained and new_selected:
+                for a in retained:
                     for b in new_selected:
                         expansion[a, b] = expansion.get((a, b), 0) + 1
-                else:
-                    state["exits"][a] += 1
-                    kind = (
-                        "exit_new_selected"
-                        if new_selected
-                        else ("exit_new_unselected_only" if added else "exit_no_new")
-                    )
-                    state[kind][a] += 1
-                    exit_events.append((user, a))
-                    for b in new_selected:
-                        migration[a, b] = migration.get((a, b), 0) + 1
-                        pair_events.append((user, a, b))
 
     return dict(
         state,
@@ -310,6 +350,13 @@ def _transition_intervals(trans, skus, users, c):
     hi = lo.copy()
     if c.bootstrap == 0 or not trans or not trans["exit_events"]:
         return lo, hi
+
+    # Guard against excessive memory usage from large p*p migration matrix
+    max_pair_events = 1_000_000
+    if len(trans["pair_events"]) > max_pair_events:
+        # Too many pair events for sparse p*p matrix; return NaN intervals
+        return lo, hi
+
     u = {v: i for i, v in enumerate(users)}
     s = {v: i for i, v in enumerate(skus)}
     ee = trans["exit_events"]
@@ -351,12 +398,9 @@ def _clusters(z, j, skus, buyers, counts):
     assignments = {}
     actual = {}
     for k in sorted(set(counts)):
-        if not 2 <= k <= p:
+        if not 2 <= k < p:
             continue
-        if k == p:
-            labels = np.arange(p, dtype=int) + 1
-        else:
-            labels = fcluster(z, t=k, criterion="maxclust")
+        labels = fcluster(z, t=k, criterion="maxclust")
         assignments[k] = labels
         actual[str(k)] = len(set(labels))
         for cl in sorted(set(labels)):

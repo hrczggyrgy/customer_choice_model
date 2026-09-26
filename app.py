@@ -7,6 +7,7 @@ Add to requirements.txt: streamlit>=1.45,<2
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import shutil
 import tempfile
@@ -57,7 +58,10 @@ div[data-testid="stAlert"] {border-radius: 8px;}
 
 def session_directory() -> Path:
     if "workspace" not in st.session_state:
-        st.session_state.workspace = tempfile.mkdtemp(prefix="choicemap_")
+        workspace = Path(tempfile.mkdtemp(prefix="choicemap_"))
+        st.session_state.workspace = str(workspace)
+        # Register cleanup on process exit
+        atexit.register(lambda: shutil.rmtree(workspace, ignore_errors=True))
     return Path(st.session_state.workspace)
 
 
@@ -400,18 +404,30 @@ with pairs_tab:
     )
 
 with migration_tab:
-    st.plotly_chart(_make_migration_matrix(data), use_container_width=True)
-    st.plotly_chart(_make_migration_rank(data), use_container_width=True)
-    st.plotly_chart(_make_migration_ci(data), use_container_width=True)
-    st.plotly_chart(_make_retention_exit_decomposition(data), use_container_width=True)
+    if data["sku"]["transition_opportunities"].sum() == 0:
+        st.info(
+            "Sequential analysis requires an order sequence column. Enable switching in the sidebar to see migration analysis."
+        )
+    else:
+        st.plotly_chart(_make_migration_matrix(data), use_container_width=True)
+        st.plotly_chart(_make_migration_rank(data), use_container_width=True)
+        st.plotly_chart(_make_migration_ci(data), use_container_width=True)
+        st.plotly_chart(_make_retention_exit_decomposition(data), use_container_width=True)
 
 with sku_tab:
-    st.plotly_chart(_make_sku_behavior_map(data), use_container_width=True)
-    st.markdown("### SKU detail")
-    selected_sku = st.selectbox("Select SKU", options, format_func=label, key="sku_detail")
-    st.plotly_chart(_make_sku_profile(data, selected_sku), use_container_width=True)
-    st.plotly_chart(_make_transition_funnel(data, selected_sku), use_container_width=True)
-    st.plotly_chart(_make_sku_relationship_rankings(data, selected_sku), use_container_width=True)
+    if data["sku"]["transition_opportunities"].sum() == 0:
+        st.info(
+            "SKU profile requires an order sequence column. Enable switching in the sidebar to see detailed SKU analysis."
+        )
+    else:
+        st.plotly_chart(_make_sku_behavior_map(data), use_container_width=True)
+        st.markdown("### SKU detail")
+        selected_sku = st.selectbox("Select SKU", options, format_func=label, key="sku_detail")
+        st.plotly_chart(_make_sku_profile(data, selected_sku), use_container_width=True)
+        st.plotly_chart(_make_transition_funnel(data, selected_sku), use_container_width=True)
+        st.plotly_chart(
+            _make_sku_relationship_rankings(data, selected_sku), use_container_width=True
+        )
 
 with exports:
     st.write(
