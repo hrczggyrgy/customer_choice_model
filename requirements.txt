@@ -1,0 +1,6 @@
+polars[rtcompat]==2.0.0rc1
+numpy>=1.26,<3
+scipy>=1.13,<2
+pyarrow>=16,<24
+streamlit
+plotly
