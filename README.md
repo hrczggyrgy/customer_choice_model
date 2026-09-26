@@ -4,10 +4,12 @@
 > not what appears in the same basket. Produces a bootstrap-validated
 > behavioral hierarchy with sequential exit tracking.
 
+[![Live app](https://img.shields.io/badge/streamlit-live%20app-FF4B4B?logo=streamlit)](https://customer-choice-model.streamlit.app/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue?logo=python)](https://www.python.org/)
 [![Polars 2.0 RC](https://img.shields.io/badge/polars-2.0--rc-orange)](https://pola.rs/posts/announcing-polars-2/)
-[![Streamlit](https://img.shields.io/badge/streamlit-%E2%89%A51.45-red?logo=streamlit)](https://streamlit.io/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+---
 
 ## Pipeline
 
@@ -25,6 +27,12 @@ flowchart LR
     style G fill:#e8f5e9,stroke:#81c784
 ```
 
+> **Interpretation matters.** Customer overlap is not causal demand transference.
+> Switching rates do not prove that removing one SKU drives customers to another.
+> This is a behavioral clustering tool, not a demand model.
+
+---
+
 ## Architecture
 
 | File | Role |
@@ -32,6 +40,8 @@ flowchart LR
 | `engine.py` | Lazy Polars ingestion → sparse MBA + customer Jaccard → linkage + bootstrap → transition tracking |
 | `visual.py` | 13 interactive Plotly figure factories built from saved artifacts |
 | `app.py` | Streamlit app: upload or sample data, column mapping, 6 tabs, sanitized exports |
+
+---
 
 ## App tabs
 
@@ -44,12 +54,17 @@ flowchart LR
 | SKU profiles | Penetration vs retention map, per-SKU KPI cards, transition funnel, relationship rankings |
 | Downloads | Parquet exports, run metadata JSON, interactive HTML report |
 
+---
+
 ## Quick start
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
+
+> The `rtcompat` Polars extra targets CPUs without AVX support.
+> Its correct spelling is `rtcompat`, not `rtcompact`.
 
 Place the sample file at `sample_data/instacart_yogurt.parquet`, then:
 
@@ -66,9 +81,11 @@ python engine.py --input sample_data/instacart_yogurt.parquet \
     --out output/yogurt_quick --max-skus 40 --bootstrap 5
 ```
 
+---
+
 ## Expected input
 
-One row per product per order.
+One row per product per order:
 
 | Column | Required | Description |
 |--------|----------|-------------|
@@ -96,6 +113,8 @@ run(Config(
 ))
 ```
 
+---
+
 ## How it works
 
 ```
@@ -121,6 +140,11 @@ Customer Jaccard — the core choice distance:
 J(A, B) = shared_buyers(A, B) / [buyers(A) + buyers(B) − shared_buyers(A, B)]
 ```
 
+Bootstrap stability resamples whole customers on each replicate. Branch support is the
+fraction of resampled trees containing the exact same descendant set.
+
+---
+
 ## Outputs
 
 | File | Contents |
@@ -131,28 +155,6 @@ J(A, B) = shared_buyers(A, B) / [buyers(A) + buyers(B) − shared_buyers(A, B)]
 | `cluster_assignments.parquet` | SKU cluster membership at K = 4, 6, 8 |
 | `cluster_profiles.parquet` | Within-cluster cohesion summary |
 | `run.json` | Config, counts, coverage, leaf order, runtime, schema version |
-
-## CLI reference
-
-```bash
-python engine.py --help
-python visual.py --help
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--input` | — | Input Parquet or CSV (required) |
-| `--out` | `output/choice_run` | Output directory |
-| `--category-col` | `aisle` | Column used to filter category |
-| `--category` | `yogurt` | Category value to keep |
-| `--min-buyers` | `30` | Minimum distinct buyers per SKU |
-| `--max-skus` | `120` | Maximum SKUs retained |
-| `--bootstrap` | `30` | Customer bootstrap replicates |
-| `--linkage` | `average` | `average`, `complete`, or `single` |
-| `--no-switching` | off | Disable sequential transition tracking |
-| `--seed` | `42` | Random seed |
-
-## Library usage
 
 ```python
 from visual import build_figures, load_run
@@ -168,3 +170,20 @@ tree, heatmap = build_figures("output/yogurt", cut=0.7)
 # _make_sku_profile             _make_sku_relationship_rankings
 # _make_transition_funnel
 ```
+
+---
+
+## CLI reference
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--input` | — | Input Parquet or CSV (required) |
+| `--out` | `output/choice_run` | Output directory |
+| `--category-col` | `aisle` | Column used to filter category |
+| `--category` | `yogurt` | Category value to keep |
+| `--min-buyers` | `30` | Minimum distinct buyers per SKU |
+| `--max-skus` | `120` | Maximum SKUs retained |
+| `--bootstrap` | `30` | Customer bootstrap replicates |
+| `--linkage` | `average` | `average`, `complete`, or `single` |
+| `--no-switching` | off | Disable sequential transition tracking |
+| `--seed` | `42` | Random seed |
